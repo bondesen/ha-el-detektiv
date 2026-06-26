@@ -1,0 +1,88 @@
+label_event:
+  name: Label hændelse
+  description: Giv en uforklaret hændelse et navn og opret/forfin dens signatur.
+  fields:
+    event_id:
+      name: Hændelses-id
+      description: id på den ulabelede hændelse (fra sensor.ulabelede_haendelser).
+      required: true
+      example: a1b2c3d4
+      selector:
+        text:
+    label:
+      name: Label
+      description: Navn på apparatet, fx "Elkedel".
+      required: true
+      example: Elkedel
+      selector:
+        text:
+
+confirm_suggestion:
+  name: Bekræft forslag
+  description: Accepter det foreslåede label på en hændelse (hæver sikkerheden).
+  fields:
+    event_id:
+      name: Hændelses-id
+      required: true
+      selector:
+        text:
+
+dismiss_event:
+  name: Afvis hændelse
+  description: Fjern en hændelse fra køen (støj/ikke relevant).
+  fields:
+    event_id:
+      name: Hændelses-id
+      required: true
+      selector:
+        text:
+
+delete_signature:
+  name: Slet signatur
+  description: Slet en lært signatur.
+  fields:
+    label:
+      name: Label
+      required: true
+      selector:
+        text:
+
+rename_signature:
+  name: Omdøb signatur
+  fields:
+    label:
+      name: Nuværende label
+      required: true
+      selector:
+        text:
+    new_label:
+      name: Nyt label
+      required: true
+      selector:
+        text:
+
+add_manual_signature:
+  name: Tilføj signatur manuelt
+  description: Seed en signatur manuelt (fx hvis du kender apparatets effekt).
+  fields:
+    label:
+      name: Label
+      required: true
+      selector:
+        text:
+    watt:
+      name: Effekt (W)
+      required: true
+      selector:
+        number:
+          min: 1
+          max: 5000
+          unit_of_measurement: W
+    duration:
+      name: Typisk varighed (s)
+      required: false
+      selector:
+        number:
+          min: 1
+          max: 36000
+          unit_of_measurement: s

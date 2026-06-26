@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "El-detektiv",
+        "description": "Vælg din totale effektmåler og de smart-plugs der allerede måler effekt. Tilføj on/off-enheder uden effektmåling (PC, NAS, TV) som detektiven kan lære automatisk.",
+        "data": {
+          "total_power": "Total effektmåler (W)",
+          "measured_plugs": "Målte smart-plugs (W)",
+          "tracked_entities": "Sporede on/off-enheder",
+          "step_threshold": "Tærskel for spring (W)",
+          "sample_interval": "Sampling-interval (s)",
+          "min_duration": "Min. varighed (s)",
+          "match_window": "Match-vindue enhed↔hændelse (s)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "El-detektiv indstillinger",
+        "data": {
+          "total_power": "Total effektmåler (W)",
+          "measured_plugs": "Målte smart-plugs (W)",
+          "tracked_entities": "Sporede on/off-enheder",
+          "step_threshold": "Tærskel for spring (W)",
+          "sample_interval": "Sampling-interval (s)",
+          "min_duration": "Min. varighed (s)",
+          "match_window": "Match-vindue enhed↔hændelse (s)"
+        }
+      }
+    }
+  }
+}

@@ -1,0 +1,35 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "El-detektiv",
+        "description": "Pick your whole-home power sensor and the smart plugs that already measure watts. Add on/off entities without power metering (PC, NAS, TV) for the detective to learn automatically.",
+        "data": {
+          "total_power": "Total power sensor (W)",
+          "measured_plugs": "Measured smart plugs (W)",
+          "tracked_entities": "Tracked on/off entities",
+          "step_threshold": "Step threshold (W)",
+          "sample_interval": "Sample interval (s)",
+          "min_duration": "Min. duration (s)",
+          "match_window": "Match window device↔event (s)"
+        }
+      }
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "El-detektiv settings",
+        "data": {
+          "total_power": "Total power sensor (W)",
+          "measured_plugs": "Measured smart plugs (W)",
+          "tracked_entities": "Tracked on/off entities",
+          "step_threshold": "Step threshold (W)",
+          "sample_interval": "Sample interval (s)",
+          "min_duration": "Min. duration (s)",
+          "match_window": "Match window device↔event (s)"
+        }
+      }
+    }
+  }
+}
