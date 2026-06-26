@@ -21,11 +21,43 @@ PLATFORMS = ["sensor"]
 
 CARD_URL = "/el_detektiv_frontend/el-detektiv-card.js"
 CARD_REL = "el-detektiv-card.js"
+CARD_VERSION = "0.6.0"
 _FRONTEND_DONE = False
 
 
+async def _register_lovelace_resource(hass: HomeAssistant) -> bool:
+    """Auto-add the card to Lovelace resources (storage mode).
+
+    This is the reliable way to load a bundled card for every user on a clean
+    install — add_extra_js_url does not inject on all setups. Returns True if a
+    resource was created/updated, False if not possible (e.g. YAML-mode).
+    """
+    try:
+        ld = hass.data.get("lovelace")
+        resources = getattr(ld, "resources", None) if ld is not None else None
+        if resources is None and isinstance(ld, dict):
+            resources = ld.get("resources")
+        if resources is None or not hasattr(resources, "async_create_item"):
+            return False
+        if hasattr(resources, "loaded") and not resources.loaded:
+            await resources.async_load()
+            resources.loaded = True
+        desired = f"{CARD_URL}?v={CARD_VERSION}"
+        for item in resources.async_items():
+            url = str(item.get("url", ""))
+            if url.split("?")[0] == CARD_URL:
+                if url != desired:
+                    await resources.async_update_item(item["id"], {"url": desired})
+                return True
+        await resources.async_create_item({"res_type": "module", "url": desired})
+        return True
+    except Exception as err:  # pragma: no cover - defensive
+        _LOGGER.warning("El-detektiv: Lovelace resource auto-register failed (%s)", err)
+        return False
+
+
 async def _register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled Lovelace card and load it as a frontend module."""
+    """Serve the bundled card and make the frontend load it — no manual steps."""
     global _FRONTEND_DONE
     if _FRONTEND_DONE:
         return
@@ -35,13 +67,18 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         await hass.http.async_register_static_paths(
             [StaticPathConfig(CARD_URL, path, False)]
         )
-    except (ImportError, AttributeError):
+    except (ImportError, AttributeError):  # older HA cores
         hass.http.register_static_path(CARD_URL, path, False)
-    try:
-        from homeassistant.components.frontend import add_extra_js_url
-        add_extra_js_url(hass, CARD_URL)
-    except Exception as err:  # pragma: no cover - defensive
-        _LOGGER.warning("El-detektiv: could not auto-load card (%s); add %s as a resource manually", err, CARD_URL)
+
+    # Preferred: register a Lovelace resource (works in storage mode for all users).
+    registered = await _register_lovelace_resource(hass)
+    if not registered:
+        # Fallback for YAML-mode dashboards, which can't take storage resources.
+        try:
+            from homeassistant.components.frontend import add_extra_js_url
+            add_extra_js_url(hass, CARD_URL)
+        except Exception as err:  # pragma: no cover - defensive
+            _LOGGER.warning("El-detektiv: could not auto-load card (%s); add %s as a resource manually", err, CARD_URL)
     _FRONTEND_DONE = True
 
 
