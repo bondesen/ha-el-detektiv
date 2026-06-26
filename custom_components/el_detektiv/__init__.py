@@ -19,6 +19,34 @@ from .coordinator import ElDetektivCoordinator
 _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
 
+CARD_URL = "/el_detektiv_frontend/el-detektiv-card.js"
+CARD_REL = "frontend/el-detektiv-card.js"
+_FRONTEND_DONE = False
+
+
+async def _register_frontend(hass: HomeAssistant) -> None:
+    """Serve the bundled Lovelace card and load it as a frontend module.
+
+    Means users get the UI from a single HACS install — no manual resource.
+    """
+    global _FRONTEND_DONE
+    if _FRONTEND_DONE:
+        return
+    path = hass.config.path(f"custom_components/{DOMAIN}/{CARD_REL}")
+    try:
+        from homeassistant.components.http import StaticPathConfig
+        await hass.http.async_register_static_paths(
+            [StaticPathConfig(CARD_URL, path, False)]
+        )
+    except (ImportError, AttributeError):  # older HA cores
+        hass.http.register_static_path(CARD_URL, path, False)
+    try:
+        from homeassistant.components.frontend import add_extra_js_url
+        add_extra_js_url(hass, CARD_URL)
+    except Exception as err:  # pragma: no cover - defensive
+        _LOGGER.warning("El-detektiv: could not auto-load card (%s); add %s as a resource manually", err, CARD_URL)
+    _FRONTEND_DONE = True
+
 
 async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     coordinator = ElDetektivCoordinator(hass, entry)
@@ -29,6 +57,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
 
     _register_services(hass)
+    await _register_frontend(hass)
     entry.async_on_unload(entry.add_update_listener(_async_reload))
     return True
 
