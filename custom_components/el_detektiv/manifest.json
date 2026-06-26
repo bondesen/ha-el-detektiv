@@ -1,0 +1,13 @@
+{
+  "domain": "el_detektiv",
+  "name": "El-detektiv",
+  "version": "0.1.0",
+  "documentation": "https://github.com/bondesen/ha-el-detektiv",
+  "issue_tracker": "https://github.com/bondesen/ha-el-detektiv/issues",
+  "codeowners": ["@bondesen"],
+  "config_flow": true,
+  "dependencies": [],
+  "requirements": [],
+  "integration_type": "service",
+  "iot_class": "calculated"
+}
