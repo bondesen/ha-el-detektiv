@@ -7,7 +7,6 @@ from homeassistant.components.sensor import (
 from homeassistant.const import UnitOfPower
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.entity import EntityCategory
 from homeassistant.helpers.update_coordinator import CoordinatorEntity
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -57,7 +56,12 @@ class UnexplainedPowerSensor(_Base, SensorEntity):
 
     @property
     def extra_state_attributes(self):
-        return {"baseline": (self.coordinator.data or {}).get("baseline")}
+        return {
+            "baseline": (self.coordinator.data or {}).get("baseline"),
+            "total_power": self.coordinator.total_power,
+            "measured_plugs": self.coordinator.measured_plugs,
+            "tracked": self.coordinator.tracked,
+        }
 
 
 class SignaturesSensor(_Base, SensorEntity):

@@ -20,15 +20,12 @@ _LOGGER = logging.getLogger(__name__)
 PLATFORMS = ["sensor"]
 
 CARD_URL = "/el_detektiv_frontend/el-detektiv-card.js"
-CARD_REL = "frontend/el-detektiv-card.js"
+CARD_REL = "el-detektiv-card.js"
 _FRONTEND_DONE = False
 
 
 async def _register_frontend(hass: HomeAssistant) -> None:
-    """Serve the bundled Lovelace card and load it as a frontend module.
-
-    Means users get the UI from a single HACS install — no manual resource.
-    """
+    """Serve the bundled Lovelace card and load it as a frontend module."""
     global _FRONTEND_DONE
     if _FRONTEND_DONE:
         return
@@ -38,7 +35,7 @@ async def _register_frontend(hass: HomeAssistant) -> None:
         await hass.http.async_register_static_paths(
             [StaticPathConfig(CARD_URL, path, False)]
         )
-    except (ImportError, AttributeError):  # older HA cores
+    except (ImportError, AttributeError):
         hass.http.register_static_path(CARD_URL, path, False)
     try:
         from homeassistant.components.frontend import add_extra_js_url
