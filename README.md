@@ -1,37 +1,60 @@
 # El-detektiv 🔌🕵️
 
 Non-intrusive load identification (NILM-light) for Home Assistant. Find out
-**what is actually drawing your power** — without putting a smart plug on
-everything.
+**what is actually drawing your power** — and **how much energy each thing
+uses** — without putting a smart plug on everything.
 
 El-detektiv watches your whole-home power meter, subtracts the loads you
 *can* measure (smart plugs), and learns the rest from the steps your total
-consumption makes when things switch on and off:
+consumption makes when things switch on and off. It ships with a polished
+Lovelace card that registers itself — **one HACS install gives you both the
+brains and the UI**.
 
-- **Auto-learning** for on/off entities you already have in HA (gaming PC,
-  NAS, TV, …). When the device flips on and the total jumps at the same
-  moment, El-detektiv records that device's wattage signature — and refines
-  it every time.
+## What it does
+
+- **Auto-learning** for on/off entities already in HA (gaming PC, NAS, TV…).
+  When a device flips on and the total jumps at the same moment, El-detektiv
+  records that device's wattage signature — and refines it every time.
 - **Human-in-the-loop** for appliances that aren't in HA at all (kettle,
-  iron, vacuum). When it sees an unexplained excursion it can't match, it
-  queues it: *"From 19:12 to 19:25 there was a ~2000 W spike that matches
-  nothing — what were you doing?"* You answer once ("boiled water"), and a
-  new candidate signature is born. Next time it suggests the label itself;
-  you confirm, and its confidence grows.
-- **Tolerant matching.** Signatures are stored as running mean **and spread**
-  (plus typical duration and time-of-day), so appliances that never draw
-  exactly the same twice still match.
+  iron, vacuum). An unexplained excursion is queued: *"19:12–19:25, ~2000 W,
+  matches nothing — what were you doing?"* You answer once, a candidate
+  signature is born, and next time it suggests the label itself.
+- **Conservative attribution.** A coincident device state-change is only
+  trusted when that device already has a *matching* signature — so a TV going
+  to "playing" near a 2 kW kettle spike is queued for confirmation, never
+  silently mislabelled.
+- **Tolerant matching.** Signatures store running mean **and spread** (plus
+  typical duration and time-of-day), so variable appliances still match.
+- **Per-device energy.** Every run is logged with a timestamp, so the card
+  shows **kWh per device over an adjustable period** (today / week / month /
+  year / last 30 days / all).
 
 Everything runs 24/7 inside Home Assistant and survives restarts (signatures
-are persisted). A companion sidebar dashboard (built separately) reads these
-entities and drives the labelling.
+are persisted via the HA Store).
+
+## The card
+
+A dependency-free custom card (`custom:el-detektiv-card`) is bundled with the
+integration and auto-registered as a frontend module — no manual resource.
+Add it to any dashboard:
+
+```yaml
+type: custom:el-detektiv-card
+```
+
+It self-configures by reading the entity lists from the integration's
+sensor attributes (override per-card with `total_power`, `measured_plugs`,
+`tracked`, `hours` if you like). It shows: snapshot tiles, a **stacked
+composition chart** (first plug / other plugs / unexplained = total), **device
+on/off lanes**, the **labelling queue**, and the **signature library with a
+kWh column and period selector**.
 
 ## Entities
 
 | Entity | What it is |
 |---|---|
-| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load: total − measured plugs − known active signatures (W) |
-| `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the full signature table |
+| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load: total − measured plugs − known active signatures (W). Attributes also expose the configured `total_power` / `measured_plugs` / `tracked` so the card can self-configure. |
+| `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the signature table incl. per-run energy log |
 | `sensor.el_detektiv_ulabelede_haendelser` | Count of unlabeled events; `events` attribute holds the queue with suggestions |
 
 A `el_detektiv_event_detected` event fires on the HA bus for every new
@@ -52,25 +75,31 @@ while you still remember what you were doing.
 2. Install **El-detektiv**, then restart Home Assistant.
 3. Settings → Devices & Services → **Add Integration** → *El-detektiv*.
 4. Pick your total power sensor, your measured plugs, and the on/off entities to track.
+5. Add `type: custom:el-detektiv-card` to a dashboard (hard-refresh the browser once so the bundled card loads).
 
 ## How detection works
 
 Each sample interval the integration computes `residual = total − measured plugs`
 and feeds it to an edge detector. A sustained rise above the rolling baseline
-opens an event; the return to baseline closes it, yielding `(Δwatt, duration)`.
-If a tracked entity switched on within the match window, the event is
-attributed to it automatically; otherwise it is queued for you to label.
-Signature statistics use Welford's online algorithm so mean and variance
-update in O(1) per sample.
+opens an event; the return to baseline closes it, yielding `(Δwatt, duration)`,
+and the run's energy `Δwatt × duration` is logged. If a tracked entity with a
+matching signature switched on within the match window, the event is attributed
+automatically; otherwise it is queued for you to label. Signature statistics
+use Welford's online algorithm so mean and variance update in O(1) per sample.
 
 ## Configuration tips
 
 - **Step threshold** (default 120 W): raise it if your baseline is noisy and
   you get too many tiny events; lower it to catch smaller appliances.
+- **Match window** (default 90 s): how close a tracked device's state-change
+  must be to an event to be considered the cause.
 - **Tracked entities**: add anything with a clear on/off (or playing/idle)
   state. Network-presence `device_tracker`s work but are noisier than real
   power states.
 
+> Note: the per-device kWh is the energy of the *runs El-detektiv explained*
+> for that appliance — not your household total (your meter already has that).
+
 ---
 
-Built for a specific Danish smart home, but generic. MIT licensed.
+MIT licensed. Built for a specific Danish smart home, but generic.
