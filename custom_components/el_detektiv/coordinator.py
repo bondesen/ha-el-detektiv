@@ -114,31 +114,55 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
         return total
 
     def _attribute_event(self, ev: dict):
-        """Decide if a completed event belongs to a tracked device or is unknown."""
+        """Decide if a completed event belongs to a tracked device or is unknown.
+
+        Auto-attribution is intentionally conservative: a coincident device
+        state-change is only trusted when that device ALREADY has a signature
+        whose magnitude matches this event. A bare coincidence (e.g. a TV going
+        to "playing" near a 2 kW kettle spike) must not silently mislabel — it
+        is queued for the user with the device offered as a low-confidence
+        suggestion instead.
+        """
         t0 = ev["t_start"]
+        delta = ev["delta_w"]
+        hour = datetime.fromtimestamp(ev["t_start"]).hour
+
+        # nearest coincident ON-transition of a tracked entity
         best = None
         for (ts, eid, is_on) in list(self._transitions):
             if is_on and abs(ts - t0) <= self.match_window:
                 d = abs(ts - t0)
                 if best is None or d < best[1]:
                     best = (eid, d)
-        hour = datetime.fromtimestamp(ev["t_start"]).hour
+
+        # confident auto-attribution: device already has a matching signature
         if best:
             eid = best[0]
-            self.store_engine.add_sample(
-                eid, ev["delta_w"], ev["duration_s"], hour, ev["t_end"])
-            self._dirty = True
-            _LOGGER.debug("El-detektiv auto-labeled %.0fW -> %s", ev["delta_w"], eid)
-            return
-        # unexplained: attach a tolerant suggestion and queue for the user
-        suggestion = self.store_engine.match(ev["delta_w"], ev["duration_s"], hour)
+            sig = self.store_engine.sigs.get(eid)
+            if sig is not None and sig.n >= 1 and abs(delta - sig.mean) <= max(sig.std * 3, 80):
+                self.store_engine.add_sample(eid, delta, ev["duration_s"], hour, ev["t_end"])
+                self._dirty = True
+                _LOGGER.debug("El-detektiv auto-labeled %.0fW -> %s", delta, eid)
+                return
+
+        # otherwise queue it; suggest the best learned match, else the
+        # coincident device (low confidence) so the user can confirm/correct.
+        suggestion, score = None, None
+        m = self.store_engine.match(delta, ev["duration_s"], hour)
+        if m:
+            suggestion, score = m
+        elif best:
+            st = self.hass.states.get(best[0])
+            suggestion = (st.attributes.get("friendly_name") if st else None) or best[0]
+            score = None
+
         item = {
             "id": uuid.uuid4().hex[:8],
             "t_start": ev["t_start"], "t_end": ev["t_end"],
-            "delta_w": ev["delta_w"], "duration_s": ev["duration_s"],
+            "delta_w": delta, "duration_s": ev["duration_s"],
             "hour": hour,
-            "suggestion": suggestion[0] if suggestion else None,
-            "suggestion_score": suggestion[1] if suggestion else None,
+            "suggestion": suggestion,
+            "suggestion_score": score,
         }
         self.pending.insert(0, item)
         self.pending = self.pending[:MAX_PENDING]
