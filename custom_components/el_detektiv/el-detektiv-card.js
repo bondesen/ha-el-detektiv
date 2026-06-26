@@ -1,24 +1,26 @@
-/*! El-detektiv card — native Lovelace, dependency-free.
- *  Stacked composition chart (first plug / other plugs / phantom = total),
- *  device on/off lanes, snapshot tiles, labelling queue, signature library.
- *  Entity lists are read from card config, else from the integration's
- *  sensor.<...>_uforklaret_effekt attributes (total_power / measured_plugs /
- *  tracked), so a plain `type: custom:el-detektiv-card` just works.
- */
-const VERSION = "0.3.0";
+/*! El-detektiv card — native Lovelace, dependency-free. Per-device energy + period. */
+const VERSION = "0.5.0";
 
 const DEF = {
   unexplained: "sensor.el_detektiv_uforklaret_effekt",
   signatures: "sensor.el_detektiv_signaturer",
   pending: "sensor.el_detektiv_ulabelede_haendelser",
-  total_power: null,
-  measured_plugs: null,
-  tracked: null,
-  hours: 24,
+  total_power: null, measured_plugs: null, tracked: null, hours: 24,
 };
 
 const ON_STATES = ["on", "home", "playing", "open", "heat", "cool", "auto", "heat_cool", "active", "cleaning", "running"];
 const isOn = s => !!s && ON_STATES.includes(String(s).toLowerCase());
+
+const PERIODS = [["today", "I dag"], ["week", "Denne uge"], ["month", "Denne måned"], ["year", "I år"], ["30d", "Seneste 30 dage"], ["all", "Alt"]];
+function periodStart(key) {
+  const n = new Date();
+  if (key === "today") { n.setHours(0, 0, 0, 0); return n.getTime() / 1000; }
+  if (key === "week") { const d = n.getDay() || 7; n.setHours(0, 0, 0, 0); n.setDate(n.getDate() - (d - 1)); return n.getTime() / 1000; }
+  if (key === "month") return new Date(n.getFullYear(), n.getMonth(), 1).getTime() / 1000;
+  if (key === "year") return new Date(n.getFullYear(), 0, 1).getTime() / 1000;
+  if (key === "30d") return (Date.now() - 30 * 86400000) / 1000;
+  return 0;
+}
 
 const CSS = `
 :host{ --fridge:#2563eb; --plugs:#0d9488; --amber:#f59e0b; --ok:#16a34a; --ink:var(--primary-text-color); }
@@ -43,6 +45,11 @@ ha-card{ padding:14px 16px 16px; }
 .seg{ position:absolute; top:0; height:11px; border-radius:2px; }
 .axis{ display:flex; justify-content:space-between; font-size:.62em; color:var(--secondary-text-color); padding-left:88px; margin-top:2px; }
 .sec{ font-size:.78em; text-transform:uppercase; letter-spacing:.04em; color:var(--secondary-text-color); margin:16px 0 6px; font-weight:600; }
+.sechead{ display:flex; align-items:center; justify-content:space-between; gap:8px; margin:16px 0 6px; }
+.sechead .sec{ margin:0; }
+.sechead select{ font:inherit; font-size:.85em; padding:3px 6px; border-radius:7px; border:1px solid var(--divider-color); background:var(--card-background-color); color:var(--ink); }
+.sigtotal{ text-align:right; font-size:.85em; color:var(--secondary-text-color); margin-top:6px; }
+.sigtotal b{ color:var(--ink); }
 .empty{ color:var(--secondary-text-color); font-style:italic; padding:6px 0; }
 .ev{ border:1px solid var(--divider-color); border-radius:10px; padding:10px; margin-bottom:8px; }
 .ev .top{ display:flex; align-items:baseline; gap:8px; flex-wrap:wrap; }
@@ -72,11 +79,7 @@ class ElDetektivCard extends HTMLElement {
   getCardSize() { return 12; }
   static getStubConfig() { return {}; }
 
-  set hass(hass) {
-    this._hass = hass;
-    if (!this._built) this._build();
-    this._update();
-  }
+  set hass(hass) { this._hass = hass; if (!this._built) this._build(); this._update(); }
 
   _resolve() {
     const c = this._config;
@@ -90,13 +93,9 @@ class ElDetektivCard extends HTMLElement {
 
   _build() {
     this._built = true;
-    this._inputs = {};
-    this._lastPending = null;
-    this._lastSigs = null;
-    this._graphAt = 0;
+    this._inputs = {}; this._lastPending = null; this._lastSigs = null; this._graphAt = 0;
     this.attachShadow({ mode: "open" });
-    const style = document.createElement("style");
-    style.textContent = CSS;
+    const style = document.createElement("style"); style.textContent = CSS;
     const card = document.createElement("ha-card");
     card.innerHTML = `
       <div class="h"><span class="t">🔌 El-detektiv</span>
@@ -109,9 +108,20 @@ class ElDetektivCard extends HTMLElement {
       <div class="foot" id="foot"></div>
       <div class="sec">Ulabelede hændelser</div>
       <div id="pending"></div>
-      <div class="sec">Lærte signaturer</div>
+      <div class="sechead">
+        <span class="sec">Lærte signaturer</span>
+        <select id="period" title="Forbrugsperiode">${PERIODS.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
+      </div>
       <div id="sigs"></div>`;
     this.shadowRoot.append(style, card);
+    const sel = this.shadowRoot.getElementById("period");
+    let saved = "month";
+    try { saved = localStorage.getItem("el_detektiv_period") || "month"; } catch (e) {}
+    sel.value = saved;
+    sel.addEventListener("change", () => {
+      try { localStorage.setItem("el_detektiv_period", sel.value); } catch (e) {}
+      this._renderSigs(this._sigLib || []);
+    });
   }
 
   _st(id) { return id && this._hass && this._hass.states[id]; }
@@ -139,8 +149,7 @@ class ElDetektivCard extends HTMLElement {
     if (plugs.length > 1) tiles.push(["Øvrige stik", W(other), "var(--plugs)"]);
     tiles.push(["Umålt (phantom)", r.total_power ? W(phantom) : (u ? W(parseFloat(u.state) || 0) : "–"), "var(--amber)"]);
     this.shadowRoot.getElementById("tiles").innerHTML = tiles.map(([k, v, col]) =>
-      `<div class="tile"><div class="k">${col ? `<i class="sw" style="background:${col}"></i>` : ""}${k}</div><div class="val">${v}</div></div>`
-    ).join("");
+      `<div class="tile"><div class="k">${col ? `<i class="sw" style="background:${col}"></i>` : ""}${k}</div><div class="val">${v}</div></div>`).join("");
 
     this.shadowRoot.getElementById("legend").innerHTML = r.total_power && plugs.length ? `
       <span><i class="sw" style="background:var(--fridge)"></i>${fridgeName}</span>
@@ -156,6 +165,7 @@ class ElDetektivCard extends HTMLElement {
 
     const sg = this._st(c.signatures);
     const lib = (sg && sg.attributes.library) || [];
+    this._sigLib = lib;
     const sk = JSON.stringify(lib);
     if (sk !== this._lastSigs) { this._lastSigs = sk; this._renderSigs(lib); }
 
@@ -168,16 +178,11 @@ class ElDetektivCard extends HTMLElement {
     const startISO = new Date(Date.now() - this._config.hours * 3600 * 1000).toISOString();
     try {
       const ids = [r.total_power, ...r.measured_plugs];
-      const stats = await this._hass.callWS({
-        type: "recorder/statistics_during_period",
-        start_time: startISO, statistic_ids: ids, period: "5minute",
-      });
+      const stats = await this._hass.callWS({ type: "recorder/statistics_during_period", start_time: startISO, statistic_ids: ids, period: "5minute" });
       const getStart = it => (typeof it.start === "number" ? it.start : Date.parse(it.start));
       const totArr = (stats && stats[r.total_power]) || [];
       if (totArr.length < 2) { this._clearGraph(); return; }
-      const plugMaps = r.measured_plugs.map(p => {
-        const m = {}; ((stats && stats[p]) || []).forEach(it => { m[getStart(it)] = it.mean; }); return m;
-      });
+      const plugMaps = r.measured_plugs.map(p => { const m = {}; ((stats && stats[p]) || []).forEach(it => { m[getStart(it)] = it.mean; }); return m; });
       const rows = totArr.map(it => {
         const t = getStart(it), tot = it.mean;
         const fr = plugMaps[0][t] || 0;
@@ -191,9 +196,7 @@ class ElDetektivCard extends HTMLElement {
     } catch (e) { this._clearGraph(); }
   }
 
-  _clearGraph() {
-    ["chart", "lanes", "axis"].forEach(id => { const el = this.shadowRoot.getElementById(id); if (el) el.innerHTML = ""; });
-  }
+  _clearGraph() { ["chart", "lanes", "axis"].forEach(id => { const el = this.shadowRoot.getElementById(id); if (el) el.innerHTML = ""; }); }
 
   _drawComposition(rows, t0, t1) {
     const svg = this.shadowRoot.getElementById("chart");
@@ -218,23 +221,17 @@ class ElDetektivCard extends HTMLElement {
   }
 
   async _drawLanes(tracked, t0, t1, startISO) {
-    const box = this.shadowRoot.getElementById("lanes");
-    box.innerHTML = "";
+    const box = this.shadowRoot.getElementById("lanes"); box.innerHTML = "";
     if (!tracked || !tracked.length) return;
     let hist;
-    try {
-      hist = await this._hass.callApi("GET",
-        `history/period/${startISO}?filter_entity_id=${tracked.join(",")}&minimal_response&significant_changes_only`);
-    } catch (e) { return; }
+    try { hist = await this._hass.callApi("GET", `history/period/${startISO}?filter_entity_id=${tracked.join(",")}&minimal_response&significant_changes_only`); } catch (e) { return; }
     const span = (t1 - t0) || 1;
     const byId = {};
     (hist || []).forEach(arr => { if (arr && arr.length) byId[arr[0].entity_id] = arr; });
     for (const eid of tracked) {
       const arr = byId[eid] || [];
-      const states = arr.map(s => ({ t: Date.parse(s.last_changed || s.last_updated), on: isOn(s.state) }))
-        .filter(s => !isNaN(s.t)).sort((a, b) => a.t - b.t);
-      const segs = []; let cur = null;
-      let startOn = false;
+      const states = arr.map(s => ({ t: Date.parse(s.last_changed || s.last_updated), on: isOn(s.state) })).filter(s => !isNaN(s.t)).sort((a, b) => a.t - b.t);
+      const segs = []; let cur = null; let startOn = false;
       for (const s of states) { if (s.t <= t0) startOn = s.on; }
       if (startOn) cur = t0;
       for (const s of states) {
@@ -248,8 +245,7 @@ class ElDetektivCard extends HTMLElement {
         return `<div class="seg" style="left:${l}%;width:${w}%;background:var(--primary-color)"></div>`;
       }).join("");
       const nm = this._name(eid).replace(/ is_home$/, "").replace(/_is_present$/, "");
-      box.insertAdjacentHTML("beforeend",
-        `<div class="lane"${segs.length ? "" : ' style="opacity:.45"'}><div class="lbl" title="${nm}">${nm}</div><div class="track">${bars}</div></div>`);
+      box.insertAdjacentHTML("beforeend", `<div class="lane"${segs.length ? "" : ' style="opacity:.45"'}><div class="lbl" title="${nm}">${nm}</div><div class="track">${bars}</div></div>`);
     }
   }
 
@@ -268,13 +264,9 @@ class ElDetektivCard extends HTMLElement {
       const hhmm = d => d.toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" });
       const mins = (ev.duration_s / 60).toFixed(ev.duration_s < 600 ? 1 : 0);
       const sug = ev.suggestion ? `<span class="sug">forslag: <b>${ev.suggestion}</b> (${Math.round((ev.suggestion_score || 0) * 100)}%)</span>` : "";
-      const el = document.createElement("div");
-      el.className = "ev";
+      const el = document.createElement("div"); el.className = "ev";
       el.innerHTML = `
-        <div class="top">
-          <span class="w">+${Math.round(ev.delta_w)} W</span>
-          <span class="meta">${hhmm(t0)}–${hhmm(t1)} · ${mins} min</span>${sug}
-        </div>
+        <div class="top"><span class="w">+${Math.round(ev.delta_w)} W</span><span class="meta">${hhmm(t0)}–${hhmm(t1)} · ${mins} min</span>${sug}</div>
         <div class="row">
           <input type="text" placeholder="Hvad lavede du? (fx Elkedel)" />
           <button class="primary" data-act="label">Gem</button>
@@ -305,25 +297,32 @@ class ElDetektivCard extends HTMLElement {
   _renderSigs(lib) {
     const box = this.shadowRoot.getElementById("sigs");
     if (!lib.length) { box.innerHTML = `<div class="empty">Endnu ingen — labelér hændelser, så bygger biblioteket sig op.</div>`; return; }
+    const sel = this.shadowRoot.getElementById("period");
+    const pkey = (sel && sel.value) || "month";
+    const start = periodStart(pkey);
+    const kwh = r => (r.runs || []).reduce((s, run) => (run[0] >= start ? s + (run[1] || 0) : s), 0) / 1000;
     const rows = [...lib].sort((a, b) => (b.mean || 0) - (a.mean || 0));
     const maxMean = Math.max(1, ...rows.map(r => r.mean || 0));
     const name = r => (r.label || "").replace(/^sensor\.|^switch\.|^media_player\.|^binary_sensor\.|^device_tracker\.|^climate\./, "");
+    let totalKwh = 0; rows.forEach(r => { totalKwh += kwh(r); });
     box.innerHTML = `<table>
-      <thead><tr><th>Enhed</th><th class="num">Effekt</th><th class="num">Målinger</th><th>Tillid</th><th></th></tr></thead>
+      <thead><tr><th>Enhed</th><th class="num">Effekt</th><th class="num">Forbrug</th><th class="num">Målinger</th><th>Tillid</th><th></th></tr></thead>
       <tbody>${rows.map(r => `
         <tr>
           <td>${name(r)}</td>
           <td class="num">${Math.round(r.mean)} W <span style="color:var(--secondary-text-color)">±${Math.round(r.std)}</span></td>
+          <td class="num">${kwh(r).toFixed(2)} kWh</td>
           <td class="num">${r.n}</td>
           <td><span class="pill ${r.confidence || "lav"}">${({ hoej: "Høj", middel: "Middel", lav: "Lav" })[r.confidence] || "Lav"}</span></td>
-          <td style="width:90px"><div class="bar" style="width:${Math.max(6, (r.mean / maxMean) * 100)}%"></div></td>
-        </tr>`).join("")}</tbody></table>`;
+          <td style="width:80px"><div class="bar" style="width:${Math.max(6, (r.mean / maxMean) * 100)}%"></div></td>
+        </tr>`).join("")}</tbody></table>
+      <div class="sigtotal">Forklaret forbrug i perioden: <b>${totalKwh.toFixed(2)} kWh</b></div>`;
   }
 }
 
 if (!customElements.get("el-detektiv-card")) {
   customElements.define("el-detektiv-card", ElDetektivCard);
   window.customCards = window.customCards || [];
-  window.customCards.push({ type: "el-detektiv-card", name: "El-detektiv", description: "NILM load identification with stacked composition chart and labelling.", preview: false });
+  window.customCards.push({ type: "el-detektiv-card", name: "El-detektiv", description: "NILM load identification with stacked composition chart, energy and labelling.", preview: false });
   console.info(`%c EL-DETEKTIV-CARD %c v${VERSION} `, "background:#f59e0b;color:#000;border-radius:3px 0 0 3px;padding:2px 4px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px");
 }

@@ -14,21 +14,21 @@ from dataclasses import dataclass, field
 from typing import Optional
 
 
-# --------------------------------------------------------------------------
-# Signature store
-# --------------------------------------------------------------------------
 class Signature:
     """Running statistics for one labelled appliance, via Welford."""
 
     def __init__(self, label: str):
         self.label = label
         self.n = 0
-        self.mean = 0.0      # mean watt step
-        self._m2 = 0.0       # sum of squares of diffs (for variance)
+        self.mean = 0.0
+        self._m2 = 0.0
         self.dur_n = 0
-        self.dur_mean = 0.0  # mean duration (s)
+        self.dur_mean = 0.0
         self.hours = [0] * 24
         self.last_ts: Optional[float] = None
+        self.runs: list = []
+
+    MAX_RUNS = 1500
 
     def add(self, watt: float, dur: Optional[float] = None,
             hour: Optional[int] = None, ts: Optional[float] = None) -> None:
@@ -43,11 +43,14 @@ class Signature:
             self.hours[hour % 24] += 1
         if ts is not None:
             self.last_ts = ts
+        if ts is not None and dur:
+            self.runs.append([int(ts), round(watt * dur / 3600.0, 1)])
+            if len(self.runs) > self.MAX_RUNS:
+                self.runs = self.runs[-self.MAX_RUNS:]
 
     @property
     def std(self) -> float:
         if self.n < 2:
-            # Unknown spread yet: assume a generous 20 % so matching still works.
             return max(self.mean * 0.20, 50.0)
         return math.sqrt(self._m2 / (self.n - 1))
 
@@ -66,6 +69,7 @@ class Signature:
             "std": round(self.std, 1), "dur_mean": round(self.dur_mean, 1),
             "hours": self.hours, "last_ts": self.last_ts,
             "confidence": self.confidence, "_m2": self._m2, "dur_n": self.dur_n,
+            "runs": self.runs,
         }
 
     @classmethod
@@ -78,6 +82,7 @@ class Signature:
         s.dur_mean = d.get("dur_mean", 0.0)
         s.hours = d.get("hours", [0] * 24)
         s.last_ts = d.get("last_ts")
+        s.runs = d.get("runs", [])
         return s
 
 
@@ -94,12 +99,6 @@ class SignatureStore:
 
     def match(self, watt: float, dur=None, hour=None, k: float = 3.0,
               min_tol: float = 80.0) -> Optional[tuple[str, float]]:
-        """Best tolerant match for an unexplained step.
-
-        Primary feature is the wattage step; duration and time-of-day refine
-        the score. Tolerance band widens with the signature's own spread so
-        variable appliances still match. Returns (label, score 0..1) or None.
-        """
         best = None
         for sig in self.sigs.values():
             if sig.n < 1:
@@ -108,28 +107,25 @@ class SignatureStore:
             dw = abs(watt - sig.mean)
             if dw > band:
                 continue
-            score = 1.0 - dw / band            # 1 = bullseye on watt
+            score = 1.0 - dw / band
             if dur is not None and sig.dur_mean > 0:
                 dr = abs(dur - sig.dur_mean) / max(sig.dur_mean, 1.0)
-                score -= min(0.25, dr * 0.25)  # duration penalty, capped
+                score -= min(0.25, dr * 0.25)
             if hour is not None and sum(sig.hours) > 0:
                 frac = sig.hours[hour % 24] / sum(sig.hours)
-                score += min(0.15, frac)       # time-of-day bonus
+                score += min(0.15, frac)
             if best is None or score > best[1]:
                 best = (sig.label, round(max(0.0, min(1.0, score)), 3))
         return best
 
 
-# --------------------------------------------------------------------------
-# Event detector
-# --------------------------------------------------------------------------
 @dataclass
 class DetectorConfig:
-    step_threshold: float = 120.0   # W rise over baseline to start an event
-    confirm: int = 2                # consecutive samples to confirm an edge
-    baseline_window: int = 12       # samples used for the idle baseline median
-    min_duration: float = 20.0      # s — ignore blips shorter than this
-    max_duration: float = 6 * 3600  # s — auto-close runaway events
+    step_threshold: float = 120.0
+    confirm: int = 2
+    baseline_window: int = 12
+    min_duration: float = 20.0
+    max_duration: float = 6 * 3600
 
 
 @dataclass
@@ -140,11 +136,7 @@ class _Open:
 
 
 class EventDetector:
-    """Feed (timestamp, residual_power); get back completed ON-run events.
-
-    An event is a sustained rise above the idle baseline that later returns
-    near the prior level — i.e. an appliance switching on then off.
-    """
+    """Feed (timestamp, residual_power); get back completed ON-run events."""
 
     def __init__(self, cfg: DetectorConfig = DetectorConfig()):
         self.cfg = cfg
@@ -174,7 +166,6 @@ class EventDetector:
             return None
 
         if self._open is None:
-            # IDLE: maintain rolling baseline, watch for a rising edge.
             if residual > self._baseline + cfg.step_threshold:
                 self._above += 1
                 if self._above >= cfg.confirm:
@@ -187,7 +178,6 @@ class EventDetector:
                 self._baseline = self._median(self._base)
             return None
 
-        # IN EVENT: track plateau, watch for return to prior level.
         op = self._open
         op.plateau.append(residual)
         if residual < op.level_before + cfg.step_threshold * 0.5:
@@ -198,14 +188,11 @@ class EventDetector:
         runaway = (t - op.t_start) >= cfg.max_duration
         if ended or runaway:
             dur = t - op.t_start
-            # plateau level = median of the sustained portion (drop the tail
-            # samples that were already falling back toward baseline).
             body = op.plateau[:-cfg.confirm] if ended else op.plateau
             level_high = self._median(body) if body else self._median(op.plateau)
             delta = level_high - op.level_before
             self._open = None
             self._below = 0
-            # reseed baseline around the prior level
             self._base.clear()
             self._base.append(op.level_before)
             self._baseline = op.level_before
