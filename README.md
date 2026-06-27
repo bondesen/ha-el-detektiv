@@ -39,17 +39,26 @@ Everything runs 24/7 inside Home Assistant and survives restarts.
 The most reliable way to teach El-detektiv an appliance it can't see:
 
 1. Designate a **test meter** in the integration options (any power sensor —
-   typically a smart plug you move around). Tip: also add it to
-   *measured plugs* so its draw is subtracted from the whole-home residual.
-2. Plug the appliance into the test meter **switched off**, then call
-   `el_detektiv.start_test_session` with `label: "Elkedel"` (or use the card).
+   typically a smart plug you move around). El-detektiv **automatically
+   subtracts whatever is on the test meter** from the whole-home "unexplained"
+   figure, so the thing you're testing never *also* shows up as a house event
+   — you do **not** need to add it to *measured plugs*.
+2. Plug the appliance into the test meter **switched off**, then start a
+   session for it (see below) with a name, e.g. `Elkedel`.
 3. Use the appliance normally for a while (a few on/off cycles, e.g. over a
    couple of days). Each cycle is measured directly on the test meter and
    added to that label's signature — down to a low `test_step_threshold`
-   (default **20 W**), because the measurement is isolated and clean.
+   (default **20 W**; set it lower, e.g. **5 W**, for tiny loads like a phone
+   charger), because the measurement is isolated and clean.
 4. When the signature reaches **high confidence** the session **ends itself**
    and you're notified. Move the appliance to any normal socket — the
    whole-home detector now matches the same wattage step to the learned label.
+
+**Starting/stopping a session:** call the `el_detektiv.start_test_session`
+service with `label: "<name>"` (and `el_detektiv.stop_test_session` to end
+early). Easiest from **Developer Tools → Actions**; or wire it to a dashboard
+button / automation. The active session name is exposed on
+`sensor.el_detektiv_uforklaret_effekt` (`test_label` attribute).
 
 > A device that's *on the whole time* won't produce on/off cycles to learn
 > from; toggle it a few times, or seed it with `add_manual_signature`.
@@ -114,12 +123,12 @@ unexplained excursion.
 
 ## How detection works
 
-Each sample interval the integration computes `residual = total − measured plugs`
-and feeds it to an edge detector. A sustained rise above the rolling baseline
-opens an event; the return to baseline closes it, yielding `(Δwatt, duration)`.
-Matching, attribution, and the confidence gate then decide whether to count it
-silently, queue/notify it, or learn it. Signature statistics use Welford's
-online algorithm.
+Each sample interval the integration computes `residual = total − measured
+plugs − test meter` and feeds it to an edge detector. A sustained rise above
+the rolling baseline opens an event; the return to baseline closes it, yielding
+`(Δwatt, duration)`. Matching, attribution, and the confidence gate then decide
+whether to count it silently, queue/notify it, or learn it. Signature
+statistics use Welford's online algorithm.
 
 **Baseline robustness.** The idle baseline is seeded from a *median of the
 first several samples* and re-syncs if an event stays open far longer than any
@@ -131,13 +140,17 @@ below the real floor and leave the detector blind. Covered by
 
 - **Step threshold** (default 120 W): the whole-home NILM threshold. The
   house baseline is noisy (±tens of W), so going very low here yields many
-  false events.
+  false events — ~150 W is a good balance for most homes.
 - **Test step threshold** (default 20 W): used only on the isolated test
-  meter, where a much lower threshold is reliable.
+  meter, where a much lower threshold is reliable (drop to ~5 W for chargers).
 - **Match window** (default 90 s): how close a tracked device's state-change
   must be to an event to be considered the cause.
 
 ## Changelog
+
+### 0.7.1
+- The **test meter is auto-subtracted** from the whole-home residual — no need
+  to also list it under *measured plugs*.
 
 ### 0.7.0
 - **Test sessions** (`start_test_session` / `stop_test_session`): supervised
