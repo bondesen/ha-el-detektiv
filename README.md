@@ -13,59 +13,93 @@ brains and the UI**.
 ## What it does
 
 - **Auto-learning** for on/off entities already in HA (gaming PC, NAS, TV…).
-  When a device flips on and the total jumps at the same moment, El-detektiv
-  records that device's wattage signature — and refines it every time.
 - **Human-in-the-loop** for appliances that aren't in HA at all (kettle,
-  iron, vacuum). An unexplained excursion is queued: *"19:12–19:25, ~2000 W,
-  matches nothing — what were you doing?"* You answer once, a candidate
-  signature is born, and next time it suggests the label itself.
-- **Conservative attribution.** A coincident device state-change is only
-  trusted when that device already has a *matching* signature — so a TV going
-  to "playing" near a 2 kW kettle spike is queued for confirmation, never
-  silently mislabelled.
-- **Tolerant matching.** Signatures store running mean **and spread** (plus
-  typical duration and time-of-day), so variable appliances still match.
-- **Per-device energy.** Every run is logged with a timestamp, so the card
-  shows **kWh per device over an adjustable period** (today / week / month /
-  year / last 30 days / all).
+  iron, vacuum): an unexplained excursion is queued/notified — *"~2000 W,
+  matches nothing — what were you doing?"* — and you label it once.
+- **Test sessions (supervised learning).** Plug a device into a dedicated
+  **test meter**, start a session with the device's name, and El-detektiv
+  learns its profile from the *clean, isolated* measurement until it's
+  confident — then recognises it anywhere on the house, even moved to a dumb
+  wall socket. See [Test sessions](#test-sessions-supervised-learning).
+- **Configurable notifications.** Get an interactive **Telegram** message when
+  a new profile turns up and label it with one tap (or a typed name) — or use
+  any `notify.*` service, or nothing at all (dashboard-only). See
+  [Notifications](#notifications).
+- **Conservative attribution & confidence gate.** A coincident device
+  state-change is only trusted when its signature matches; and once a device
+  is **well learned (high confidence)** its events are auto-counted *silently*
+  — you stop being pinged for things it already knows.
+- **Tolerant matching** (running mean + spread + duration + time-of-day) and
+  **per-device energy** (kWh per device over an adjustable period).
 
-Everything runs 24/7 inside Home Assistant and survives restarts (signatures
-are persisted via the HA Store).
+Everything runs 24/7 inside Home Assistant and survives restarts.
+
+## Test sessions (supervised learning)
+
+The most reliable way to teach El-detektiv an appliance it can't see:
+
+1. Designate a **test meter** in the integration options (any power sensor —
+   typically a smart plug you move around). Tip: also add it to
+   *measured plugs* so its draw is subtracted from the whole-home residual.
+2. Plug the appliance into the test meter **switched off**, then call
+   `el_detektiv.start_test_session` with `label: "Elkedel"` (or use the card).
+3. Use the appliance normally for a while (a few on/off cycles, e.g. over a
+   couple of days). Each cycle is measured directly on the test meter and
+   added to that label's signature — down to a low `test_step_threshold`
+   (default **20 W**), because the measurement is isolated and clean.
+4. When the signature reaches **high confidence** the session **ends itself**
+   and you're notified. Move the appliance to any normal socket — the
+   whole-home detector now matches the same wattage step to the learned label.
+
+> A device that's *on the whole time* won't produce on/off cycles to learn
+> from; toggle it a few times, or seed it with `add_manual_signature`.
+
+## Notifications
+
+Configured in the integration options — pick what suits you:
+
+- **Telegram (interactive).** Set `telegram_chat_id` (and have the
+  `telegram_bot` integration running). New unexplained events arrive with
+  inline buttons: **the suggested name**, **✏️ Nyt navn** (reply with a typed
+  name), and **🗑 Ignorér**. Tapping a name (or replying) creates the signature
+  with count 1 / increments it if it exists.
+- **Any notify service.** Set `notify_service` to e.g. `notify.mobile_app_x`
+  for a plain-text heads-up; label from the dashboard.
+- **Dashboard-only.** Leave both blank — events just appear in the card.
+
+Notifications **stop automatically** for a device once it reaches high
+confidence (it's then auto-counted silently).
 
 ## The card
 
-A dependency-free custom card (`custom:el-detektiv-card`) is bundled with the
-integration and auto-registered as a frontend module — no manual resource.
-Add it to any dashboard:
+A dependency-free custom card (`custom:el-detektiv-card`) is bundled and
+auto-registered. Add it to any dashboard:
 
 ```yaml
 type: custom:el-detektiv-card
 ```
 
-It self-configures by reading the entity lists from the integration's
-sensor attributes (override per-card with `total_power`, `measured_plugs`,
-`tracked`, `hours` if you like). It shows: snapshot tiles, a **stacked
-composition chart** (first plug / other plugs / unexplained = total), **device
-on/off lanes**, the **labelling queue**, and the **signature library with a
-kWh column and period selector**.
+It shows snapshot tiles, a stacked composition chart, device on/off lanes,
+the labelling queue, and the signature library with a kWh column and period
+selector.
 
 ## Entities
 
 | Entity | What it is |
 |---|---|
-| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load: total − measured plugs − known active signatures (W). Attributes also expose the configured `total_power` / `measured_plugs` / `tracked` so the card can self-configure. |
-| `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the signature table incl. per-run energy log |
-| `sensor.el_detektiv_ulabelede_haendelser` | Count of unlabeled events; `events` attribute holds the queue with suggestions |
+| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load (W); attributes expose `total_power` / `measured_plugs` / `tracked` and the active `test_label`. |
+| `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the signature table incl. per-run energy log. |
+| `sensor.el_detektiv_ulabelede_haendelser` | Count of unlabeled events; `events` attribute holds the queue with suggestions. |
 
 A `el_detektiv_event_detected` event fires on the HA bus for every new
-unexplained excursion — hook it to a mobile notification so you can label
-while you still remember what you were doing.
+unexplained excursion.
 
 ## Services
 
 - `el_detektiv.label_event` — name an unexplained event → create/refine a signature
-- `el_detektiv.confirm_suggestion` — accept the suggested label (raises confidence)
+- `el_detektiv.confirm_suggestion` — accept the suggested label
 - `el_detektiv.dismiss_event` — drop a noise event
+- `el_detektiv.start_test_session` / `el_detektiv.stop_test_session` — supervised learning via the test meter
 - `el_detektiv.add_manual_signature` — seed a signature you already know
 - `el_detektiv.rename_signature` / `el_detektiv.delete_signature`
 
@@ -74,51 +108,51 @@ while you still remember what you were doing.
 1. HACS → ⋮ → **Custom repositories** → add `https://github.com/bondesen/ha-el-detektiv`, category **Integration**.
 2. Install **El-detektiv**, then restart Home Assistant.
 3. Settings → Devices & Services → **Add Integration** → *El-detektiv*.
-4. Pick your total power sensor, your measured plugs, and the on/off entities to track.
-5. Add `type: custom:el-detektiv-card` to a dashboard (hard-refresh the browser once so the bundled card loads).
+4. Pick total power sensor, measured plugs, tracked on/off entities, and
+   (optionally) a **test meter** + **notify service / Telegram chat id**.
+5. Add `type: custom:el-detektiv-card` to a dashboard (hard-refresh once).
 
 ## How detection works
 
 Each sample interval the integration computes `residual = total − measured plugs`
 and feeds it to an edge detector. A sustained rise above the rolling baseline
-opens an event; the return to baseline closes it, yielding `(Δwatt, duration)`,
-and the run's energy `Δwatt × duration` is logged. If a tracked entity with a
-matching signature switched on within the match window, the event is attributed
-automatically; otherwise it is queued for you to label. Signature statistics
-use Welford's online algorithm so mean and variance update in O(1) per sample.
+opens an event; the return to baseline closes it, yielding `(Δwatt, duration)`.
+Matching, attribution, and the confidence gate then decide whether to count it
+silently, queue/notify it, or learn it. Signature statistics use Welford's
+online algorithm.
 
 **Baseline robustness.** The idle baseline is seeded from a *median of the
-first several samples* (never a single reading), and any event that stays open
-far longer than a real transient (`rebaseline_after`, default 30 min) is
-abandoned and the baseline re-synced to the current level. This prevents a
-stray low reading at startup/reload from pinning the baseline below the real
-floor — which would otherwise make the steady floor look like a permanent "on"
-and leave the detector blind to new steps until a reload. Covered by
+first several samples* and re-syncs if an event stays open far longer than any
+real transient — so a stray low reading at startup can't pin the baseline
+below the real floor and leave the detector blind. Covered by
 `tests/test_nilm_core.py` (`pytest tests/`, no HA needed).
 
 ## Configuration tips
 
-- **Step threshold** (default 120 W): raise it if your baseline is noisy and
-  you get too many tiny events; lower it to catch smaller appliances.
+- **Step threshold** (default 120 W): the whole-home NILM threshold. The
+  house baseline is noisy (±tens of W), so going very low here yields many
+  false events.
+- **Test step threshold** (default 20 W): used only on the isolated test
+  meter, where a much lower threshold is reliable.
 - **Match window** (default 90 s): how close a tracked device's state-change
   must be to an event to be considered the cause.
-- **Tracked entities**: add anything with a clear on/off (or playing/idle)
-  state. Network-presence `device_tracker`s work but are noisier than real
-  power states.
-
-> Note: the per-device kWh is the energy of the *runs El-detektiv explained*
-> for that appliance — not your household total (your meter already has that).
 
 ## Changelog
 
+### 0.7.0
+- **Test sessions** (`start_test_session` / `stop_test_session`): supervised
+  learning of an appliance from a dedicated **test meter**, with a separate
+  low `test_step_threshold` (default 20 W); auto-finishes at high confidence.
+- **Configurable notifications**: interactive Telegram (inline buttons +
+  reply-to-name), any `notify.*` service, or dashboard-only.
+- **Confidence gate**: events matching a high-confidence signature are
+  auto-counted silently (no more notifications for known devices).
+
 ### 0.6.1
-- **Fix — baseline self-heal.** A low power reading at startup (common just
-  after a reload) could pin the idle baseline far below the real floor. The
-  steady floor then read as a permanent "on", so the detector opened an event
-  that never closed and stopped seeing new steps — e.g. kettles went
-  undetected until the integration was reloaded. The baseline is now seeded
-  from a median of the first samples, and a stuck-open event re-syncs the
-  baseline after `rebaseline_after`. Added `tests/test_nilm_core.py`.
+- **Fix — baseline self-heal.** A low power reading at startup could pin the
+  idle baseline below the real floor, leaving the detector "in an event" and
+  blind (kettles undetected until a reload). Baseline now warms up from a
+  median and re-syncs if stuck. Added `tests/test_nilm_core.py`.
 
 ---
 
