@@ -56,11 +56,15 @@ class UnexplainedPowerSensor(_Base, SensorEntity):
 
     @property
     def extra_state_attributes(self):
+        data = self.coordinator.data or {}
         return {
-            "baseline": (self.coordinator.data or {}).get("baseline"),
+            "baseline": data.get("baseline"),
             "total_power": self.coordinator.total_power,
             "measured_plugs": self.coordinator.measured_plugs,
             "tracked": self.coordinator.tracked,
+            "test_meter": self.coordinator.test_meter,
+            "test_label": data.get("test_label"),
+            "test_started": data.get("test_started"),
         }
 
 
