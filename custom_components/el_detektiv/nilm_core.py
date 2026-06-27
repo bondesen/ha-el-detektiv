@@ -126,6 +126,10 @@ class DetectorConfig:
     baseline_window: int = 12
     min_duration: float = 20.0
     max_duration: float = 6 * 3600
+    # An event still open after this many seconds is treated as a mis-seeded
+    # baseline (the steady floor reads as a permanent "on") and is abandoned so
+    # the detector re-syncs instead of staying blind forever.
+    rebaseline_after: float = 1800.0
 
 
 @dataclass
@@ -136,7 +140,15 @@ class _Open:
 
 
 class EventDetector:
-    """Feed (timestamp, residual_power); get back completed ON-run events."""
+    """Feed (timestamp, residual_power); get back completed ON-run events.
+
+    Baseline robustness: the idle baseline is seeded from a *median of the
+    first ``baseline_window`` samples* (never a single reading), and an event
+    that stays open longer than ``rebaseline_after`` is abandoned and the
+    baseline re-synced to the current level. Together these guarantee that a
+    bad startup reading can never pin the baseline below the real floor and
+    leave the detector permanently "in an event" (blind to new steps).
+    """
 
     def __init__(self, cfg: DetectorConfig = DetectorConfig()):
         self.cfg = cfg
@@ -160,9 +172,15 @@ class EventDetector:
 
     def feed(self, t: float, residual: float) -> Optional[dict]:
         cfg = self.cfg
+
+        # Warm-up: establish the baseline from a median of the first N samples,
+        # never a single reading. A lone low/high sample at startup (e.g. just
+        # after a reload) must not lock the baseline far from the real floor —
+        # that used to leave the detector permanently "in an event" and blind.
         if self._baseline is None:
             self._base.append(residual)
-            self._baseline = residual
+            if len(self._base) >= cfg.baseline_window:
+                self._baseline = self._median(self._base)
             return None
 
         if self._open is None:
@@ -186,6 +204,22 @@ class EventDetector:
             self._below = 0
         ended = self._below >= cfg.confirm
         runaway = (t - op.t_start) >= cfg.max_duration
+
+        # Self-heal: an event open far longer than any real transient
+        # (kettle/iron/vacuum are minutes) almost always means the baseline was
+        # seeded too low, so the steady floor reads as a permanent "on".
+        # Abandon it without emitting and re-baseline to the current level, so
+        # the detector never stays blind. A genuinely long load simply becomes
+        # the new baseline and is picked up again on its next change.
+        if not ended and (t - op.t_start) >= cfg.rebaseline_after:
+            level_now = self._median(op.plateau[-cfg.baseline_window:])
+            self._open = None
+            self._below = 0
+            self._base.clear()
+            self._base.append(level_now)
+            self._baseline = level_now
+            return None
+
         if ended or runaway:
             dur = t - op.t_start
             body = op.plateau[:-cfg.confirm] if ended else op.plateau
@@ -194,8 +228,13 @@ class EventDetector:
             self._open = None
             self._below = 0
             self._base.clear()
-            self._base.append(op.level_before)
-            self._baseline = op.level_before
+            # Clean end -> the floor returns to the prior level. Runaway (still
+            # on after max_duration) -> re-baseline to the current level so a
+            # never-closing load can't re-lock the detector.
+            seed = (op.level_before if ended
+                    else self._median(op.plateau[-cfg.baseline_window:]))
+            self._base.append(seed)
+            self._baseline = seed
             if dur >= cfg.min_duration and delta >= cfg.step_threshold:
                 return {
                     "t_start": op.t_start, "t_end": t,
