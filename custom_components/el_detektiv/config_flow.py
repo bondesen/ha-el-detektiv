@@ -43,16 +43,27 @@ def _schema(defaults: dict) -> vol.Schema:
         vol.Optional(CONF_MATCH_WINDOW, default=d.get(CONF_MATCH_WINDOW, DEFAULT_MATCH_WINDOW)):
             NumberSelector(NumberSelectorConfig(min=15, max=300, step=5, unit_of_measurement="s", mode="box")),
         # --- Test meter (supervised learning) ---
-        vol.Optional(CONF_TEST_METER, default=d.get(CONF_TEST_METER)):
+        vol.Optional(CONF_TEST_METER, description={"suggested_value": d.get(CONF_TEST_METER) or None}):
             EntitySelector(EntitySelectorConfig(domain="sensor", device_class="power")),
         vol.Optional(CONF_TEST_STEP_THRESHOLD, default=d.get(CONF_TEST_STEP_THRESHOLD, DEFAULT_TEST_STEP_THRESHOLD)):
             NumberSelector(NumberSelectorConfig(min=5, max=500, step=5, unit_of_measurement="W", mode="box")),
-        # --- Notifications (optional; leave blank for dashboard-only) ---
-        vol.Optional(CONF_NOTIFY_SERVICE, default=d.get(CONF_NOTIFY_SERVICE, "")):
+        # --- Notifications (optional; clear the field for dashboard-only) ---
+        # suggested_value (not default) so the fields can be emptied again.
+        vol.Optional(CONF_NOTIFY_SERVICE, description={"suggested_value": d.get(CONF_NOTIFY_SERVICE) or None}):
             TextSelector(TextSelectorConfig()),
-        vol.Optional(CONF_TELEGRAM_CHAT_ID, default=d.get(CONF_TELEGRAM_CHAT_ID, "")):
+        vol.Optional(CONF_TELEGRAM_CHAT_ID, description={"suggested_value": d.get(CONF_TELEGRAM_CHAT_ID) or None}):
             TextSelector(TextSelectorConfig()),
     })
+
+
+def _clean(data: dict) -> dict:
+    """Normalise optional text fields: missing -> empty string."""
+    out = dict(data)
+    for key in (CONF_NOTIFY_SERVICE, CONF_TELEGRAM_CHAT_ID):
+        out[key] = (out.get(key) or "")
+    if not out.get(CONF_TEST_METER):
+        out.pop(CONF_TEST_METER, None)
+    return out
 
 
 class ElDetektivConfigFlow(ConfigFlow, domain=DOMAIN):
@@ -60,7 +71,7 @@ class ElDetektivConfigFlow(ConfigFlow, domain=DOMAIN):
 
     async def async_step_user(self, user_input=None):
         if user_input is not None:
-            return self.async_create_entry(title="El-detektiv", data=user_input)
+            return self.async_create_entry(title="El-detektiv", data=_clean(user_input))
         return self.async_show_form(step_id="user", data_schema=_schema({}))
 
     @staticmethod
@@ -75,6 +86,6 @@ class ElDetektivOptionsFlow(OptionsFlow):
 
     async def async_step_init(self, user_input=None):
         if user_input is not None:
-            return self.async_create_entry(title="", data=user_input)
+            return self.async_create_entry(title="", data=_clean(user_input))
         current = {**self._entry.data, **self._entry.options}
         return self.async_show_form(step_id="init", data_schema=_schema(current))
