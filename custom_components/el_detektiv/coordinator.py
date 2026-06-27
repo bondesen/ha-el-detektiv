@@ -254,7 +254,7 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
             row.append(f"\U0001f5d1 Ignorér:/eldx {item['id']}")
             await self.hass.services.async_call("telegram_bot", "send_message", {
                 "message": self._event_line(item),
-                "target": int(self.telegram_chat_id),
+                "chat_id": int(self.telegram_chat_id),
                 "inline_keyboard": [row],
             }, blocking=False)
         except Exception as err:  # pragma: no cover - defensive
@@ -263,7 +263,7 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
     async def _tg_send(self, message: str):
         try:
             await self.hass.services.async_call("telegram_bot", "send_message", {
-                "message": message, "target": int(self.telegram_chat_id),
+                "message": message, "chat_id": int(self.telegram_chat_id),
             }, blocking=False)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning("El-detektiv: telegram send failed (%s)", err)
