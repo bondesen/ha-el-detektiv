@@ -11,7 +11,8 @@ from homeassistant.helpers import config_validation as cv
 from .const import (
     DOMAIN, SERVICE_LABEL_EVENT, SERVICE_CONFIRM_SUGGESTION,
     SERVICE_DISMISS_EVENT, SERVICE_DELETE_SIGNATURE, SERVICE_RENAME_SIGNATURE,
-    SERVICE_ADD_MANUAL_SIGNATURE, ATTR_EVENT_ID, ATTR_LABEL, ATTR_NEW_LABEL,
+    SERVICE_ADD_MANUAL_SIGNATURE, SERVICE_START_TEST_SESSION,
+    SERVICE_STOP_TEST_SESSION, ATTR_EVENT_ID, ATTR_LABEL, ATTR_NEW_LABEL,
     ATTR_WATT, ATTR_DURATION,
 )
 from .coordinator import ElDetektivCoordinator
@@ -110,6 +111,7 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
                 SERVICE_LABEL_EVENT, SERVICE_CONFIRM_SUGGESTION,
                 SERVICE_DISMISS_EVENT, SERVICE_DELETE_SIGNATURE,
                 SERVICE_RENAME_SIGNATURE, SERVICE_ADD_MANUAL_SIGNATURE,
+                SERVICE_START_TEST_SESSION, SERVICE_STOP_TEST_SESSION,
             ):
                 hass.services.async_remove(DOMAIN, svc)
     return unload_ok
@@ -159,6 +161,16 @@ def _register_services(hass: HomeAssistant) -> None:
                 call.data.get(ATTR_DURATION))
         await _refresh()
 
+    async def start_test_session(call: ServiceCall):
+        for c in _all_coords():
+            c.start_test_session(call.data[ATTR_LABEL])
+        await _refresh()
+
+    async def stop_test_session(call: ServiceCall):
+        for c in _all_coords():
+            c.stop_test_session()
+        await _refresh()
+
     hass.services.async_register(DOMAIN, SERVICE_LABEL_EVENT, label_event,
         schema=vol.Schema({vol.Required(ATTR_EVENT_ID): cv.string,
                            vol.Required(ATTR_LABEL): cv.string}))
@@ -175,3 +187,7 @@ def _register_services(hass: HomeAssistant) -> None:
         schema=vol.Schema({vol.Required(ATTR_LABEL): cv.string,
                            vol.Required(ATTR_WATT): vol.Coerce(float),
                            vol.Optional(ATTR_DURATION): vol.Coerce(float)}))
+    hass.services.async_register(DOMAIN, SERVICE_START_TEST_SESSION, start_test_session,
+        schema=vol.Schema({vol.Required(ATTR_LABEL): cv.string}))
+    hass.services.async_register(DOMAIN, SERVICE_STOP_TEST_SESSION, stop_test_session,
+        schema=vol.Schema({}))
