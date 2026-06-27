@@ -17,10 +17,11 @@ brains and the UI**.
   iron, vacuum): an unexplained excursion is queued/notified — *"~2000 W,
   matches nothing — what were you doing?"* — and you label it once.
 - **Test sessions (supervised learning).** Plug a device into a dedicated
-  **test meter**, start a session with the device's name, and El-detektiv
-  learns its profile from the *clean, isolated* measurement until it's
-  confident — then recognises it anywhere on the house, even moved to a dumb
-  wall socket. See [Test sessions](#test-sessions-supervised-learning).
+  **test meter**, start a session **right in the card** with the device's
+  name, and El-detektiv learns its profile from the *clean, isolated*
+  measurement until it's confident — then recognises it anywhere on the house,
+  even moved to a dumb wall socket. See
+  [Test sessions](#test-sessions-supervised-learning).
 - **Configurable notifications.** Get an interactive **Telegram** message when
   a new profile turns up and label it with one tap (or a typed name) — or use
   any `notify.*` service, or nothing at all (dashboard-only). See
@@ -43,8 +44,8 @@ The most reliable way to teach El-detektiv an appliance it can't see:
    subtracts whatever is on the test meter** from the whole-home "unexplained"
    figure, so the thing you're testing never *also* shows up as a house event
    — you do **not** need to add it to *measured plugs*.
-2. Plug the appliance into the test meter **switched off**, then start a
-   session for it (see below) with a name, e.g. `Elkedel`.
+2. Plug the appliance into the test meter **switched off**, then in the card's
+   **Test-session** panel type a name (e.g. `Elkedel`) and press **Start**.
 3. Use the appliance normally for a while (a few on/off cycles, e.g. over a
    couple of days). Each cycle is measured directly on the test meter and
    added to that label's signature — down to a low `test_step_threshold`
@@ -54,10 +55,10 @@ The most reliable way to teach El-detektiv an appliance it can't see:
    and you're notified. Move the appliance to any normal socket — the
    whole-home detector now matches the same wattage step to the learned label.
 
-**Starting/stopping a session:** call the `el_detektiv.start_test_session`
-service with `label: "<name>"` (and `el_detektiv.stop_test_session` to end
-early). Easiest from **Developer Tools → Actions**; or wire it to a dashboard
-button / automation. The active session name is exposed on
+**Where:** the card shows a **Test-session** panel — type a name → **Start**,
+and **Stop** while it's running (with the live test-meter watt). Prefer
+automation? The same thing is exposed as the `el_detektiv.start_test_session`
+/ `stop_test_session` services. The active session name is on
 `sensor.el_detektiv_uforklaret_effekt` (`test_label` attribute).
 
 > A device that's *on the whole time* won't produce on/off cycles to learn
@@ -88,15 +89,15 @@ auto-registered. Add it to any dashboard:
 type: custom:el-detektiv-card
 ```
 
-It shows snapshot tiles, a stacked composition chart, device on/off lanes,
-the labelling queue, and the signature library with a kWh column and period
-selector.
+It shows snapshot tiles, a stacked composition chart, device on/off lanes, a
+**test-session panel** (start/stop supervised learning), the labelling queue,
+and the signature library with a kWh column and period selector.
 
 ## Entities
 
 | Entity | What it is |
 |---|---|
-| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load (W); attributes expose `total_power` / `measured_plugs` / `tracked` and the active `test_label`. |
+| `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load (W); attributes expose `total_power` / `measured_plugs` / `tracked` / `test_meter` and the active `test_label`. |
 | `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the signature table incl. per-run energy log. |
 | `sensor.el_detektiv_ulabelede_haendelser` | Count of unlabeled events; `events` attribute holds the queue with suggestions. |
 
@@ -108,7 +109,7 @@ unexplained excursion.
 - `el_detektiv.label_event` — name an unexplained event → create/refine a signature
 - `el_detektiv.confirm_suggestion` — accept the suggested label
 - `el_detektiv.dismiss_event` — drop a noise event
-- `el_detektiv.start_test_session` / `el_detektiv.stop_test_session` — supervised learning via the test meter
+- `el_detektiv.start_test_session` / `el_detektiv.stop_test_session` — supervised learning via the test meter (also in the card)
 - `el_detektiv.add_manual_signature` — seed a signature you already know
 - `el_detektiv.rename_signature` / `el_detektiv.delete_signature`
 
@@ -147,6 +148,11 @@ below the real floor and leave the detector blind. Covered by
   must be to an event to be considered the cause.
 
 ## Changelog
+
+### 0.7.2
+- **Test sessions are now controlled from the card** — a Test-session panel
+  (name → Start, Stop while running, live test-meter watt). Services still work
+  for automations.
 
 ### 0.7.1
 - The **test meter is auto-subtracted** from the whole-home residual — no need
