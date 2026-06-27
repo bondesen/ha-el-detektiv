@@ -22,7 +22,7 @@ PLATFORMS = ["sensor"]
 
 CARD_URL = "/el_detektiv_frontend/el-detektiv-card.js"
 CARD_REL = "el-detektiv-card.js"
-CARD_VERSION = "0.6.0"
+CARD_VERSION = "0.7.2"
 _FRONTEND_DONE = False
 
 
