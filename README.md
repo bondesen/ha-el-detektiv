@@ -87,6 +87,15 @@ matching signature switched on within the match window, the event is attributed
 automatically; otherwise it is queued for you to label. Signature statistics
 use Welford's online algorithm so mean and variance update in O(1) per sample.
 
+**Baseline robustness.** The idle baseline is seeded from a *median of the
+first several samples* (never a single reading), and any event that stays open
+far longer than a real transient (`rebaseline_after`, default 30 min) is
+abandoned and the baseline re-synced to the current level. This prevents a
+stray low reading at startup/reload from pinning the baseline below the real
+floor — which would otherwise make the steady floor look like a permanent "on"
+and leave the detector blind to new steps until a reload. Covered by
+`tests/test_nilm_core.py` (`pytest tests/`, no HA needed).
+
 ## Configuration tips
 
 - **Step threshold** (default 120 W): raise it if your baseline is noisy and
@@ -99,6 +108,17 @@ use Welford's online algorithm so mean and variance update in O(1) per sample.
 
 > Note: the per-device kWh is the energy of the *runs El-detektiv explained*
 > for that appliance — not your household total (your meter already has that).
+
+## Changelog
+
+### 0.6.1
+- **Fix — baseline self-heal.** A low power reading at startup (common just
+  after a reload) could pin the idle baseline far below the real floor. The
+  steady floor then read as a permanent "on", so the detector opened an event
+  that never closed and stopped seeing new steps — e.g. kettles went
+  undetected until the integration was reloaded. The baseline is now seeded
+  from a median of the first samples, and a stuck-open event re-syncs the
+  baseline after `rebaseline_after`. Added `tests/test_nilm_core.py`.
 
 ---
 
