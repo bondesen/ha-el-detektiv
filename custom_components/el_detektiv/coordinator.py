@@ -341,6 +341,12 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
         if total is not None:
             plug_sum = sum(
                 (_to_float(self.hass, p) or 0.0) for p in self.measured_plugs)
+            # The test meter is an isolated, measured load — always subtract it
+            # from the whole-home residual so whatever you're testing never also
+            # shows up as an "unexplained" house event. No manual measured-plugs
+            # entry needed.
+            if self.test_meter and self.test_meter not in self.measured_plugs:
+                plug_sum += (_to_float(self.hass, self.test_meter) or 0.0)
             residual_for_detector = total - plug_sum
             ev = self.detector.feed(time.time(), residual_for_detector)
             if ev:
