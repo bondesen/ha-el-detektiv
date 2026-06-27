@@ -9,13 +9,16 @@ from homeassistant.config_entries import (
 from homeassistant.core import callback
 from homeassistant.helpers.selector import (
     EntitySelector, EntitySelectorConfig, NumberSelector, NumberSelectorConfig,
+    TextSelector, TextSelectorConfig,
 )
 
 from .const import (
     DOMAIN, CONF_TOTAL_POWER, CONF_MEASURED_PLUGS, CONF_TRACKED_ENTITIES,
     CONF_STEP_THRESHOLD, CONF_SAMPLE_INTERVAL, CONF_MIN_DURATION,
-    CONF_MATCH_WINDOW, DEFAULT_STEP_THRESHOLD, DEFAULT_SAMPLE_INTERVAL,
-    DEFAULT_MIN_DURATION, DEFAULT_MATCH_WINDOW,
+    CONF_MATCH_WINDOW, CONF_TEST_METER, CONF_TEST_STEP_THRESHOLD,
+    CONF_NOTIFY_SERVICE, CONF_TELEGRAM_CHAT_ID,
+    DEFAULT_STEP_THRESHOLD, DEFAULT_SAMPLE_INTERVAL,
+    DEFAULT_MIN_DURATION, DEFAULT_MATCH_WINDOW, DEFAULT_TEST_STEP_THRESHOLD,
 )
 
 
@@ -39,6 +42,16 @@ def _schema(defaults: dict) -> vol.Schema:
             NumberSelector(NumberSelectorConfig(min=10, max=600, step=5, unit_of_measurement="s", mode="box")),
         vol.Optional(CONF_MATCH_WINDOW, default=d.get(CONF_MATCH_WINDOW, DEFAULT_MATCH_WINDOW)):
             NumberSelector(NumberSelectorConfig(min=15, max=300, step=5, unit_of_measurement="s", mode="box")),
+        # --- Test meter (supervised learning) ---
+        vol.Optional(CONF_TEST_METER, default=d.get(CONF_TEST_METER)):
+            EntitySelector(EntitySelectorConfig(domain="sensor", device_class="power")),
+        vol.Optional(CONF_TEST_STEP_THRESHOLD, default=d.get(CONF_TEST_STEP_THRESHOLD, DEFAULT_TEST_STEP_THRESHOLD)):
+            NumberSelector(NumberSelectorConfig(min=5, max=500, step=5, unit_of_measurement="W", mode="box")),
+        # --- Notifications (optional; leave blank for dashboard-only) ---
+        vol.Optional(CONF_NOTIFY_SERVICE, default=d.get(CONF_NOTIFY_SERVICE, "")):
+            TextSelector(TextSelectorConfig()),
+        vol.Optional(CONF_TELEGRAM_CHAT_ID, default=d.get(CONF_TELEGRAM_CHAT_ID, "")):
+            TextSelector(TextSelectorConfig()),
     })
 
 
