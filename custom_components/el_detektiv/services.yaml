@@ -86,3 +86,22 @@ add_manual_signature:
           min: 1
           max: 36000
           unit_of_measurement: s
+
+start_test_session:
+  name: Start test-session
+  description: >
+    Start supervised læring af en enhed via Testmåleren. Sæt enheden i
+    Testmåler-stikket og vælg navnet. Integrationen lærer profilen direkte
+    fra Testmålerens målinger og afslutter selv ved høj tillid.
+  fields:
+    label:
+      name: Enhedens navn
+      description: Navnet enheden skal læres under, fx "Elkedel".
+      required: true
+      example: Elkedel
+      selector:
+        text:
+
+stop_test_session:
+  name: Stop test-session
+  description: Afslut en igangværende test-session manuelt (ellers stopper den selv ved høj tillid).
