@@ -247,16 +247,22 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
 
     async def _send_telegram_event(self, item: dict):
         try:
-            row = []
-            if item.get("suggestion"):
-                row.append(f"✅ {item['suggestion']}:/eldc {item['id']}")
-            row.append(f"✏️ Nyt navn:/eldn {item['id']}")
-            row.append(f"\U0001f5d1 Ignorér:/eldx {item['id']}")
+            # HA telegram_bot wants inline_keyboard as a list of ROW STRINGS,
+            # each a comma-separated list of "text:/callback_data" buttons.
+            # A list-of-lists silently 500s and nothing is delivered.
+            buttons = []
+            sug = item.get("suggestion")
+            if sug:
+                safe = str(sug).replace(",", " ").replace(":", " ")
+                buttons.append(f"✅ {safe}:/eldc {item['id']}")
+            buttons.append(f"✏️ Nyt navn:/eldn {item['id']}")
+            buttons.append(f"\U0001f5d1 Ignorér:/eldx {item['id']}")
             await self.hass.services.async_call("telegram_bot", "send_message", {
                 "message": self._event_line(item),
                 "chat_id": int(self.telegram_chat_id),
-                "inline_keyboard": [row],
-            }, blocking=False)
+                "parse_mode": "markdown",
+                "inline_keyboard": [", ".join(buttons)],
+            }, blocking=True)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning("El-detektiv: telegram notify failed (%s)", err)
 
@@ -264,7 +270,8 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
         try:
             await self.hass.services.async_call("telegram_bot", "send_message", {
                 "message": message, "chat_id": int(self.telegram_chat_id),
-            }, blocking=False)
+                "parse_mode": "markdown",
+            }, blocking=True)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning("El-detektiv: telegram send failed (%s)", err)
 
