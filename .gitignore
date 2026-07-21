@@ -1,0 +1,7 @@
+# macOS-junk
+._*
+.DS_Store
+
+# lokale agent-/analyse-rester
+.opencode/
+graphify-out/
