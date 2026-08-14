@@ -30,29 +30,22 @@ STORAGE_VERSION = 1
 STORAGE_KEY = "el_detektiv_signatures"
 
 # Dispatcher / event names
-EVENT_DETECTED = "el_detektiv_event_detected"   # fired on HA bus on new unlabeled event
 SIGNAL_UPDATE = "el_detektiv_update"
 
 # Services
-SERVICE_LABEL_EVENT = "label_event"
-SERVICE_CONFIRM_SUGGESTION = "confirm_suggestion"
-SERVICE_DISMISS_EVENT = "dismiss_event"
 SERVICE_DELETE_SIGNATURE = "delete_signature"
 SERVICE_RENAME_SIGNATURE = "rename_signature"
 SERVICE_ADD_MANUAL_SIGNATURE = "add_manual_signature"
 SERVICE_START_TEST_SESSION = "start_test_session"
 SERVICE_STOP_TEST_SESSION = "stop_test_session"
 
-ATTR_EVENT_ID = "event_id"
 ATTR_LABEL = "label"
 ATTR_NEW_LABEL = "new_label"
 ATTR_WATT = "watt"
 ATTR_DURATION = "duration"
 
-MAX_PENDING = 50  # cap the unlabeled-event queue
-
-# A signature at this confidence is trusted enough to auto-attribute silently
-# (no notification) and to auto-finish a test session.
+# A signature at this confidence is trusted enough to auto-attribute a
+# whole-home event to it, and to auto-finish a test session.
 CONFIDENCE_TRUSTED = "hoej"
 
 

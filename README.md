@@ -13,23 +13,20 @@ brains and the UI**.
 ## What it does
 
 - **Auto-learning** for on/off entities already in HA (gaming PC, NAS, TV…).
-- **Human-in-the-loop** for appliances that aren't in HA at all (kettle,
-  iron, vacuum): an unexplained excursion is queued/notified — *"~2000 W,
-  matches nothing — what were you doing?"* — and you label it once.
-- **Test sessions (supervised learning).** Plug a device into a dedicated
+- **Test sessions (supervised learning)** — the way you teach El-detektiv an
+  appliance it can't see. Plug a device into a dedicated
   **test meter**, start a session **right in the card** with the device's
   name, and El-detektiv learns its profile from the *clean, isolated*
   measurement until it's confident — then recognises it anywhere on the house,
   even moved to a dumb wall socket. See
   [Test sessions](#test-sessions-supervised-learning).
-- **Configurable notifications.** Get an interactive **Telegram** message when
-  a new profile turns up and label it with one tap (or a typed name) — or use
-  any `notify.*` service, or nothing at all (dashboard-only). See
-  [Notifications](#notifications).
-- **Conservative attribution & confidence gate.** A coincident device
-  state-change is only trusted when its signature matches; and once a device
-  is **well learned (high confidence)** its events are auto-counted *silently*
-  — you stop being pinged for things it already knows.
+- **Silent whole-home matching.** Detected steps are matched against what is
+  already known — a coincident tracked device whose signature fits, or a
+  high-confidence learned signature — and counted. **Anything it cannot
+  attribute is discarded.** No labelling queue, no "what were you doing?"
+  notifications.
+- **Optional status notifications.** Telegram or any `notify.*` service, used
+  only to tell you a test session finished. See [Notifications](#notifications).
 - **Tolerant matching** (running mean + spread + duration + time-of-day) and
   **per-device energy** (kWh per device over an adjustable period).
 
@@ -53,7 +50,8 @@ The most reliable way to teach El-detektiv an appliance it can't see:
    charger), because the measurement is isolated and clean.
 4. When the signature reaches **high confidence** the session **ends itself**
    and you're notified. Move the appliance to any normal socket — the
-   whole-home detector now matches the same wattage step to the learned label.
+   whole-home detector now matches the same wattage step to the learned label
+   and counts its runs silently.
 
 **Where:** the card shows a **Test-session** panel — type a name → **Start**,
 and **Stop** while it's running (with the live test-meter watt). Prefer
@@ -66,19 +64,15 @@ automation? The same thing is exposed as the `el_detektiv.start_test_session`
 
 ## Notifications
 
-Configured in the integration options — pick what suits you:
+El-detektiv **never notifies about unexplained power**. The only message it
+sends is a status line when a test session finishes ("✅ har lært *X*").
+Configured in the integration options:
 
-- **Telegram (interactive).** Set `telegram_chat_id` (and have the
-  `telegram_bot` integration running). New unexplained events arrive with
-  inline buttons: **the suggested name**, **✏️ Nyt navn** (reply with a typed
-  name), and **🗑 Ignorér**. Tapping a name (or replying) creates the signature
-  with count 1 / increments it if it exists.
-- **Any notify service.** Set `notify_service` to e.g. `notify.mobile_app_x`
-  for a plain-text heads-up; label from the dashboard.
-- **Dashboard-only.** Leave both blank — events just appear in the card.
-
-Notifications **stop automatically** for a device once it reaches high
-confidence (it's then auto-counted silently).
+- **Telegram.** Set `telegram_chat_id` (and have the `telegram_bot`
+  integration running).
+- **Any notify service.** Set `notify_service` to e.g. `notify.mobile_app_x`.
+  Ignored when a Telegram chat id is set.
+- **Silent.** Leave both blank.
 
 ## The card
 
@@ -90,8 +84,8 @@ type: custom:el-detektiv-card
 ```
 
 It shows snapshot tiles, a stacked composition chart, device on/off lanes, a
-**test-session panel** (start/stop supervised learning), the labelling queue,
-and the signature library with a kWh column and period selector.
+**test-session panel** (start/stop supervised learning), and the signature
+library with a kWh column and period selector.
 
 ## Entities
 
@@ -99,16 +93,9 @@ and the signature library with a kWh column and period selector.
 |---|---|
 | `sensor.el_detektiv_uforklaret_effekt` | Live "dark" load (W); attributes expose `total_power` / `measured_plugs` / `tracked` / `test_meter` and the active `test_label`. |
 | `sensor.el_detektiv_signaturer` | Count of learned appliances; `library` attribute holds the signature table incl. per-run energy log. |
-| `sensor.el_detektiv_ulabelede_haendelser` | Count of unlabeled events; `events` attribute holds the queue with suggestions. |
-
-A `el_detektiv_event_detected` event fires on the HA bus for every new
-unexplained excursion.
 
 ## Services
 
-- `el_detektiv.label_event` — name an unexplained event → create/refine a signature
-- `el_detektiv.confirm_suggestion` — accept the suggested label
-- `el_detektiv.dismiss_event` — drop a noise event
 - `el_detektiv.start_test_session` / `el_detektiv.stop_test_session` — supervised learning via the test meter (also in the card)
 - `el_detektiv.add_manual_signature` — seed a signature you already know
 - `el_detektiv.rename_signature` / `el_detektiv.delete_signature`
@@ -127,9 +114,10 @@ unexplained excursion.
 Each sample interval the integration computes `residual = total − measured
 plugs − test meter` and feeds it to an edge detector. A sustained rise above
 the rolling baseline opens an event; the return to baseline closes it, yielding
-`(Δwatt, duration)`. Matching, attribution, and the confidence gate then decide
-whether to count it silently, queue/notify it, or learn it. Signature
-statistics use Welford's online algorithm.
+`(Δwatt, duration)`. The step is then counted against a coincident tracked
+device whose signature fits, or against a high-confidence learned signature —
+and dropped if neither applies. Signature statistics use Welford's online
+algorithm.
 
 **Baseline robustness.** The idle baseline is seeded from a *median of the
 first several samples* and re-syncs if an event stays open far longer than any
@@ -148,6 +136,18 @@ below the real floor and leave the detector blind. Covered by
   must be to an event to be considered the cause.
 
 ## Changelog
+
+### 0.8.0
+- **Removed the unlabeled-event workflow.** No pending queue, no
+  `sensor.el_detektiv_ulabelede_haendelser`, no labelling UI in the card, no
+  event notifications, no interactive Telegram buttons, and no
+  `el_detektiv_event_detected` bus event. Removed services: `label_event`,
+  `confirm_suggestion`, `dismiss_event`.
+- Whole-home detection still runs, but **silently**: a step is only used to
+  count a run on an already-known device; unattributable steps are discarded.
+- Learning is now exclusively **test sessions** + `add_manual_signature`.
+- Notification config is kept, used only for test-session status.
+- Any legacy pending queue in `.storage` is discarded on first save.
 
 ### 0.7.2
 - **Test sessions are now controlled from the card** — a Test-session panel

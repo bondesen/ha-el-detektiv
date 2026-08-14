@@ -20,7 +20,6 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry,
     async_add_entities([
         UnexplainedPowerSensor(coord, entry),
         SignaturesSensor(coord, entry),
-        PendingEventsSensor(coord, entry),
     ])
 
 
@@ -83,20 +82,3 @@ class SignaturesSensor(_Base, SensorEntity):
     @property
     def extra_state_attributes(self):
         return {"library": (self.coordinator.data or {}).get("signatures", [])}
-
-
-class PendingEventsSensor(_Base, SensorEntity):
-    _attr_name = "Ulabelede hændelser"
-    _attr_icon = "mdi:clipboard-text-search-outline"
-    _attr_state_class = SensorStateClass.MEASUREMENT
-
-    def __init__(self, coord, entry):
-        super().__init__(coord, entry, "ulabelede_haendelser")
-
-    @property
-    def native_value(self):
-        return len((self.coordinator.data or {}).get("pending", []))
-
-    @property
-    def extra_state_attributes(self):
-        return {"events": (self.coordinator.data or {}).get("pending", [])}

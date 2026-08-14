@@ -1,9 +1,16 @@
-"""El-detektiv coordinator: samples power, detects events, learns signatures."""
+"""El-detektiv coordinator: samples power, detects events, learns signatures.
+
+Whole-home event detection is *silent*: a detected step is only used to count
+usage on an already-known device (coincident tracked entity, or a trusted
+signature match). Steps that cannot be attributed are discarded — the
+integration never queues "unlabeled events" and never asks you to label them.
+Learning happens through the dedicated test meter (supervised test sessions)
+or `add_manual_signature`.
+"""
 from __future__ import annotations
 
 import logging
 import time
-import uuid
 from collections import deque
 from datetime import timedelta, datetime
 
@@ -14,7 +21,7 @@ from homeassistant.helpers.event import async_track_state_change_event
 from homeassistant.helpers.storage import Store
 
 from .const import (
-    DOMAIN, STORAGE_KEY, STORAGE_VERSION, EVENT_DETECTED, MAX_PENDING,
+    DOMAIN, STORAGE_KEY, STORAGE_VERSION,
     CONF_TOTAL_POWER, CONF_MEASURED_PLUGS, CONF_TRACKED_ENTITIES,
     CONF_STEP_THRESHOLD, CONF_SAMPLE_INTERVAL, CONF_MIN_DURATION,
     CONF_MATCH_WINDOW, CONF_TEST_METER, CONF_TEST_STEP_THRESHOLD,
@@ -57,7 +64,8 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
         self.test_step_threshold = float(
             opts.get(CONF_TEST_STEP_THRESHOLD, DEFAULT_TEST_STEP_THRESHOLD))
 
-        # Notifications — optional (empty = dashboard only).
+        # Notifications — optional (empty = dashboard only). Used only for
+        # test-session status; unattributed events are never announced.
         self.notify_service: str = (opts.get(CONF_NOTIFY_SERVICE) or "").strip()
         self.telegram_chat_id: str = str(opts.get(CONF_TELEGRAM_CHAT_ID) or "").strip()
 
@@ -75,32 +83,32 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
             min_duration=self.min_duration,
         ))
         self.store_engine = SignatureStore()
-        self.pending: list[dict] = []
         self._store = Store(hass, STORAGE_VERSION, STORAGE_KEY)
         self._dirty = False
         # recent on/off transitions of tracked entities: (ts, entity_id, is_on)
         self._transitions: deque = deque(maxlen=200)
         self._unsub_state = None
-        self._unsub_tg_cb = None
-        self._unsub_tg_txt = None
         self._residual = None
         # test session
         self.test_label: str | None = None
         self.test_started: float | None = None
-        # telegram: event_id we're awaiting a free-text name reply for
-        self._awaiting: str | None = None
 
     # ---------- persistence ----------
     async def async_load(self):
         data = await self._store.async_load() or {}
         for d in data.get("signatures", []):
             self.store_engine.sigs[d["label"]] = Signature.from_dict(d)
-        self.pending = data.get("pending", [])
+        # Legacy stores (<= 0.7.x) also held a "pending" queue of unlabeled
+        # events. That feature is gone; drop the leftovers on the next save.
+        if data.get("pending"):
+            _LOGGER.info(
+                "El-detektiv: discarding %d legacy unlabeled events from storage",
+                len(data["pending"]))
+            self._dirty = True
 
     async def async_save(self):
         await self._store.async_save({
             "signatures": [s.to_dict() for s in self.store_engine.sigs.values()],
-            "pending": self.pending,
         })
         self._dirty = False
 
@@ -111,18 +119,11 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
             self._unsub_state = async_track_state_change_event(
                 self.hass, self.tracked, self._on_tracked_change
             )
-        # Interactive Telegram: listen for button taps and free-text replies.
-        if self.telegram_chat_id:
-            self._unsub_tg_cb = self.hass.bus.async_listen(
-                "telegram_callback", self._on_tg_callback)
-            self._unsub_tg_txt = self.hass.bus.async_listen(
-                "telegram_text", self._on_tg_text)
 
     async def async_stop(self):
-        for unsub in (self._unsub_state, self._unsub_tg_cb, self._unsub_tg_txt):
-            if unsub:
-                unsub()
-        self._unsub_state = self._unsub_tg_cb = self._unsub_tg_txt = None
+        if self._unsub_state:
+            self._unsub_state()
+        self._unsub_state = None
         if self._dirty:
             await self.async_save()
 
@@ -163,8 +164,13 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
                     total += sig.mean
         return total
 
-    def _attribute_event(self, ev: dict):
-        """Decide a completed event: auto-attribute, auto-match, or queue."""
+    def _attribute_event(self, ev: dict) -> str | None:
+        """Silently attribute a completed whole-home event to a known device.
+
+        Returns the label the event was counted against, or None when it could
+        not be attributed — in which case the step is simply dropped. No queue,
+        no notification, no labelling chore.
+        """
         t0 = ev["t_start"]
         delta = ev["delta_w"]
         hour = datetime.fromtimestamp(ev["t_start"]).hour
@@ -185,10 +191,10 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
                 self.store_engine.add_sample(eid, delta, ev["duration_s"], hour, ev["t_end"])
                 self._dirty = True
                 _LOGGER.debug("El-detektiv auto-labeled %.0fW -> %s", delta, eid)
-                return
+                return eid
 
-        # 2) trusted-signature silent auto-match: once a device is well learned
-        #    (high confidence), stop bothering the user — just count it.
+        # 2) trusted-signature auto-match: a well-learned device (typically
+        #    taught through a test session) gets this run counted.
         m = self.store_engine.match(delta, ev["duration_s"], hour)
         if m:
             sig = self.store_engine.sigs.get(m[0])
@@ -196,75 +202,20 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
                 self.store_engine.add_sample(m[0], delta, ev["duration_s"], hour, ev["t_end"])
                 self._dirty = True
                 _LOGGER.debug("El-detektiv auto-matched %.0fW -> %s (trusted)", delta, m[0])
-                return
+                return m[0]
 
-        # 3) otherwise queue it; suggest the best learned match, else the
-        #    coincident device (low confidence) so the user can confirm/correct.
-        suggestion, score = None, None
-        if m:
-            suggestion, score = m
-        elif best:
-            st = self.hass.states.get(best[0])
-            suggestion = (st.attributes.get("friendly_name") if st else None) or best[0]
-            score = None
-
-        item = {
-            "id": uuid.uuid4().hex[:8],
-            "t_start": ev["t_start"], "t_end": ev["t_end"],
-            "delta_w": delta, "duration_s": ev["duration_s"],
-            "hour": hour,
-            "suggestion": suggestion,
-            "suggestion_score": score,
-        }
-        self.pending.insert(0, item)
-        self.pending = self.pending[:MAX_PENDING]
-        self._dirty = True
-        self.hass.bus.async_fire(EVENT_DETECTED, item)
-        self._notify_event(item)
+        # 3) unknown step — deliberately ignored.
+        _LOGGER.debug("El-detektiv: unattributed %.0fW step (%.0fs) ignored",
+                      delta, ev["duration_s"])
+        return None
 
     # ---------- notifications ----------
-    def _notify_event(self, item: dict):
-        if self.telegram_chat_id:
-            self.hass.async_create_task(self._send_telegram_event(item))
-        elif self.notify_service:
-            self.hass.async_create_task(self._send_simple(item))
-
     def _notify_text(self, message: str):
+        """Send a status line (test session learned/finished). Optional."""
         if self.telegram_chat_id:
             self.hass.async_create_task(self._tg_send(message))
         elif self.notify_service:
             self.hass.async_create_task(self._simple_send(message))
-
-    def _event_line(self, item: dict) -> str:
-        t0 = datetime.fromtimestamp(item["t_start"]).strftime("%H:%M")
-        t1 = datetime.fromtimestamp(item["t_end"]).strftime("%H:%M")
-        mins = round(item["duration_s"] / 60.0, 1)
-        line = f"⚡ Uforklaret forbrug: *{round(item['delta_w'])} W* · {t0}–{t1} · {mins} min"
-        if item.get("suggestion"):
-            pct = f" ({round((item['suggestion_score'] or 0) * 100)}%)" if item.get("suggestion_score") else ""
-            line += f"\nForslag: *{item['suggestion']}*{pct}"
-        return line
-
-    async def _send_telegram_event(self, item: dict):
-        try:
-            # HA telegram_bot wants inline_keyboard as a list of ROW STRINGS,
-            # each a comma-separated list of "text:/callback_data" buttons.
-            # A list-of-lists silently 500s and nothing is delivered.
-            buttons = []
-            sug = item.get("suggestion")
-            if sug:
-                safe = str(sug).replace(",", " ").replace(":", " ")
-                buttons.append(f"✅ {safe}:/eldc {item['id']}")
-            buttons.append(f"✏️ Nyt navn:/eldn {item['id']}")
-            buttons.append(f"\U0001f5d1 Ignorér:/eldx {item['id']}")
-            await self.hass.services.async_call("telegram_bot", "send_message", {
-                "message": self._event_line(item),
-                "chat_id": int(self.telegram_chat_id),
-                "parse_mode": "markdown",
-                "inline_keyboard": [", ".join(buttons)],
-            }, blocking=True)
-        except Exception as err:  # pragma: no cover - defensive
-            _LOGGER.warning("El-detektiv: telegram notify failed (%s)", err)
 
     async def _tg_send(self, message: str):
         try:
@@ -274,9 +225,6 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
             }, blocking=True)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning("El-detektiv: telegram send failed (%s)", err)
-
-    async def _send_simple(self, item: dict):
-        await self._simple_send(self._event_line(item))
 
     async def _simple_send(self, message: str):
         svc = self.notify_service
@@ -290,57 +238,6 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
                 domain, service, {"message": message}, blocking=False)
         except Exception as err:  # pragma: no cover - defensive
             _LOGGER.warning("El-detektiv: notify '%s' failed (%s)", svc, err)
-
-    # ---------- telegram interaction ----------
-    @callback
-    def _on_tg_callback(self, event: Event):
-        data = str((event.data or {}).get("data", "")).strip()
-        cqid = (event.data or {}).get("id")
-        parts = data.split()
-        if len(parts) < 2 or not parts[0].startswith("/eld"):
-            return
-        cmd, eid = parts[0], parts[1]
-        reply = None
-        if cmd == "/eldc":
-            self.confirm_suggestion(eid)
-            reply = "Bekræftet ✅"
-        elif cmd == "/eldx":
-            self.dismiss_event(eid)
-            reply = "Ignoreret \U0001f5d1"
-        elif cmd == "/eldn":
-            self._awaiting = eid
-            reply = "Skriv navnet i et svar ✏️"
-            self.hass.async_create_task(self._tg_send(
-                "✏️ Skriv navnet på enheden (som en almindelig besked):"))
-        else:
-            return
-        self._dirty = True
-        self.hass.async_create_task(self._after_tg_action(cqid, reply))
-
-    @callback
-    def _on_tg_text(self, event: Event):
-        if not self._awaiting:
-            return
-        text = str((event.data or {}).get("text", "")).strip()
-        if not text or text.startswith("/"):
-            return
-        eid, self._awaiting = self._awaiting, None
-        self.label_event(eid, text)
-        self._dirty = True
-        self.hass.async_create_task(self._after_tg_action(None, f"Gemt som *{text}* ✅"))
-
-    async def _after_tg_action(self, cqid, reply: str | None):
-        if cqid is not None and reply:
-            try:
-                await self.hass.services.async_call(
-                    "telegram_bot", "answer_callback_query",
-                    {"callback_query_id": cqid, "message": reply}, blocking=False)
-            except Exception:  # pragma: no cover - defensive
-                pass
-        elif reply:
-            await self._tg_send(reply)
-        await self.async_save()
-        self.async_set_updated_data(await self._async_update_data())
 
     # ---------- main loop ----------
     async def _async_update_data(self):
@@ -389,30 +286,11 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
             "residual": self._residual,
             "baseline": self.detector.baseline,
             "signatures": [s.to_dict() for s in self.store_engine.sigs.values()],
-            "pending": list(self.pending),
             "test_label": self.test_label,
             "test_started": self.test_started,
         }
 
     # ---------- service handlers ----------
-    def label_event(self, event_id: str, label: str):
-        item = self._pop_pending(event_id)
-        if not item:
-            return
-        self.store_engine.add_sample(
-            label, item["delta_w"], item["duration_s"], item.get("hour"),
-            item["t_end"])
-        self._dirty = True
-
-    def confirm_suggestion(self, event_id: str):
-        item = next((p for p in self.pending if p["id"] == event_id), None)
-        if item and item.get("suggestion"):
-            self.label_event(event_id, item["suggestion"])
-
-    def dismiss_event(self, event_id: str):
-        self._pop_pending(event_id)
-        self._dirty = True
-
     def delete_signature(self, label: str):
         self.store_engine.sigs.pop(label, None)
         self._dirty = True
@@ -427,9 +305,3 @@ class ElDetektivCoordinator(DataUpdateCoordinator):
     def add_manual_signature(self, label: str, watt: float, duration=None):
         self.store_engine.add_sample(label, float(watt), duration)
         self._dirty = True
-
-    def _pop_pending(self, event_id: str):
-        for i, p in enumerate(self.pending):
-            if p["id"] == event_id:
-                return self.pending.pop(i)
-        return None

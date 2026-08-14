@@ -1,17 +1,16 @@
 /*! El-detektiv card — native Lovelace, dependency-free.
  *  Stacked composition chart (first plug / other plugs / phantom = total),
- *  device on/off lanes, snapshot tiles, labelling queue, signature library,
- *  and test-session control (start/stop supervised learning via the test meter).
+ *  device on/off lanes, snapshot tiles, signature library, and test-session
+ *  control (start/stop supervised learning via the test meter).
  *  Entity lists are read from card config, else from the integration's
  *  sensor.<...>_uforklaret_effekt attributes (total_power / measured_plugs /
  *  tracked / test_meter / test_label), so a plain `type: custom:el-detektiv-card` just works.
  */
-const VERSION = "0.7.2";
+const VERSION = "0.8.0";
 
 const DEF = {
   unexplained: "sensor.el_detektiv_uforklaret_effekt",
   signatures: "sensor.el_detektiv_signaturer",
-  pending: "sensor.el_detektiv_ulabelede_haendelser",
   total_power: null,      // override; else read from sensor attributes
   measured_plugs: null,   // override; else read from sensor attributes
   tracked: null,          // override; else read from sensor attributes
@@ -108,8 +107,6 @@ class ElDetektivCard extends HTMLElement {
 
   _build() {
     this._built = true;
-    this._inputs = {};
-    this._lastPending = null;
     this._lastSigs = null;
     this._lastTest = null;
     this._testInput = "";
@@ -128,8 +125,6 @@ class ElDetektivCard extends HTMLElement {
       <div class="axis" id="axis"></div>
       <div class="foot" id="foot"></div>
       <div id="testsession"></div>
-      <div class="sec">Ulabelede hændelser</div>
-      <div id="pending"></div>
       <div class="sechead">
         <span class="sec">Lærte signaturer</span>
         <select id="period" title="Forbrugsperiode">${PERIODS.map(([k, l]) => `<option value="${k}">${l}</option>`).join("")}</select>
@@ -181,11 +176,6 @@ class ElDetektivCard extends HTMLElement {
       ? "Stablede arealer summer til totalforbruget. Bjælker = enhed tændt/spillede." : "";
 
     this._renderTestSession();
-
-    const pend = this._st(c.pending);
-    const events = (pend && pend.attributes.events) || [];
-    const pk = JSON.stringify(events);
-    if (pk !== this._lastPending) { this._lastPending = pk; this._renderPending(events); }
 
     const sg = this._st(c.signatures);
     const lib = (sg && sg.attributes.library) || [];
@@ -328,48 +318,11 @@ class ElDetektivCard extends HTMLElement {
     for (let i = 0; i <= 4; i++) { const t = t0 + (t1 - t0) * i / 4; box.insertAdjacentHTML("beforeend", `<span>${fmt(t)}</span>`); }
   }
 
-  _renderPending(events) {
-    const box = this.shadowRoot.getElementById("pending");
-    if (!events.length) { box.innerHTML = `<div class="empty">Ingen — alt forklaret lige nu. 👌</div>`; return; }
-    box.innerHTML = "";
-    for (const ev of events) {
-      const t0 = new Date(ev.t_start * 1000), t1 = new Date(ev.t_end * 1000);
-      const hhmm = d => d.toLocaleTimeString("da-DK", { hour: "2-digit", minute: "2-digit" });
-      const mins = (ev.duration_s / 60).toFixed(ev.duration_s < 600 ? 1 : 0);
-      const sug = ev.suggestion ? `<span class="sug">forslag: <b>${ev.suggestion}</b> (${Math.round((ev.suggestion_score || 0) * 100)}%)</span>` : "";
-      const el = document.createElement("div"); el.className = "ev";
-      el.innerHTML = `
-        <div class="top"><span class="w">+${Math.round(ev.delta_w)} W</span><span class="meta">${hhmm(t0)}–${hhmm(t1)} · ${mins} min</span>${sug}</div>
-        <div class="row">
-          <input type="text" placeholder="Hvad lavede du? (fx Elkedel)" />
-          <button class="primary" data-act="label">Gem</button>
-          ${ev.suggestion ? `<button class="ok" data-act="confirm">Bekræft ${ev.suggestion}</button>` : ""}
-          <button class="ghost" data-act="dismiss">Afvis</button>
-        </div>`;
-      const input = el.querySelector("input");
-      input.value = this._inputs[ev.id] || "";
-      input.addEventListener("input", e => { this._inputs[ev.id] = e.target.value; });
-      input.addEventListener("keydown", e => { if (e.key === "Enter") this._label(ev.id); });
-      el.querySelector('[data-act="label"]').addEventListener("click", () => this._label(ev.id));
-      const cf = el.querySelector('[data-act="confirm"]');
-      if (cf) cf.addEventListener("click", () => this._svc("confirm_suggestion", { event_id: ev.id }));
-      el.querySelector('[data-act="dismiss"]').addEventListener("click", () => this._svc("dismiss_event", { event_id: ev.id }));
-      box.appendChild(el);
-    }
-  }
-
-  _label(id) {
-    const label = (this._inputs[id] || "").trim();
-    if (!label) return;
-    delete this._inputs[id];
-    this._svc("label_event", { event_id: id, label });
-  }
-
   _svc(service, data) { if (this._hass) this._hass.callService("el_detektiv", service, data); }
 
   _renderSigs(lib) {
     const box = this.shadowRoot.getElementById("sigs");
-    if (!lib.length) { box.innerHTML = `<div class="empty">Endnu ingen — labelér hændelser, så bygger biblioteket sig op.</div>`; return; }
+    if (!lib.length) { box.innerHTML = `<div class="empty">Endnu ingen — kør en test-session med Testmåleren, så bygger biblioteket sig op.</div>`; return; }
     const sel = this.shadowRoot.getElementById("period");
     const pkey = (sel && sel.value) || "month";
     const start = periodStart(pkey);
@@ -396,6 +349,6 @@ class ElDetektivCard extends HTMLElement {
 if (!customElements.get("el-detektiv-card")) {
   customElements.define("el-detektiv-card", ElDetektivCard);
   window.customCards = window.customCards || [];
-  window.customCards.push({ type: "el-detektiv-card", name: "El-detektiv", description: "NILM load identification with stacked composition chart, energy, test sessions and labelling.", preview: false });
+  window.customCards.push({ type: "el-detektiv-card", name: "El-detektiv", description: "NILM load identification with stacked composition chart, energy and supervised test sessions.", preview: false });
   console.info(`%c EL-DETEKTIV-CARD %c v${VERSION} `, "background:#f59e0b;color:#000;border-radius:3px 0 0 3px;padding:2px 4px", "background:#333;color:#fff;border-radius:0 3px 3px 0;padding:2px 4px");
 }

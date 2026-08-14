@@ -9,10 +9,9 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.helpers import config_validation as cv
 
 from .const import (
-    DOMAIN, SERVICE_LABEL_EVENT, SERVICE_CONFIRM_SUGGESTION,
-    SERVICE_DISMISS_EVENT, SERVICE_DELETE_SIGNATURE, SERVICE_RENAME_SIGNATURE,
+    DOMAIN, SERVICE_DELETE_SIGNATURE, SERVICE_RENAME_SIGNATURE,
     SERVICE_ADD_MANUAL_SIGNATURE, SERVICE_START_TEST_SESSION,
-    SERVICE_STOP_TEST_SESSION, ATTR_EVENT_ID, ATTR_LABEL, ATTR_NEW_LABEL,
+    SERVICE_STOP_TEST_SESSION, ATTR_LABEL, ATTR_NEW_LABEL,
     ATTR_WATT, ATTR_DURATION,
 )
 from .coordinator import ElDetektivCoordinator
@@ -22,7 +21,7 @@ PLATFORMS = ["sensor"]
 
 CARD_URL = "/el_detektiv_frontend/el-detektiv-card.js"
 CARD_REL = "el-detektiv-card.js"
-CARD_VERSION = "0.7.2"
+CARD_VERSION = "0.8.0"
 _FRONTEND_DONE = False
 
 
@@ -108,17 +107,16 @@ async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
         await coord.async_stop()
         if not hass.data[DOMAIN]:
             for svc in (
-                SERVICE_LABEL_EVENT, SERVICE_CONFIRM_SUGGESTION,
-                SERVICE_DISMISS_EVENT, SERVICE_DELETE_SIGNATURE,
-                SERVICE_RENAME_SIGNATURE, SERVICE_ADD_MANUAL_SIGNATURE,
-                SERVICE_START_TEST_SESSION, SERVICE_STOP_TEST_SESSION,
+                SERVICE_DELETE_SIGNATURE, SERVICE_RENAME_SIGNATURE,
+                SERVICE_ADD_MANUAL_SIGNATURE, SERVICE_START_TEST_SESSION,
+                SERVICE_STOP_TEST_SESSION,
             ):
                 hass.services.async_remove(DOMAIN, svc)
     return unload_ok
 
 
 def _register_services(hass: HomeAssistant) -> None:
-    if hass.services.has_service(DOMAIN, SERVICE_LABEL_EVENT):
+    if hass.services.has_service(DOMAIN, SERVICE_DELETE_SIGNATURE):
         return
 
     def _all_coords():
@@ -128,21 +126,6 @@ def _register_services(hass: HomeAssistant) -> None:
         for c in _all_coords():
             await c.async_save()
             c.async_set_updated_data(await c._async_update_data())
-
-    async def label_event(call: ServiceCall):
-        for c in _all_coords():
-            c.label_event(call.data[ATTR_EVENT_ID], call.data[ATTR_LABEL])
-        await _refresh()
-
-    async def confirm_suggestion(call: ServiceCall):
-        for c in _all_coords():
-            c.confirm_suggestion(call.data[ATTR_EVENT_ID])
-        await _refresh()
-
-    async def dismiss_event(call: ServiceCall):
-        for c in _all_coords():
-            c.dismiss_event(call.data[ATTR_EVENT_ID])
-        await _refresh()
 
     async def delete_signature(call: ServiceCall):
         for c in _all_coords():
@@ -171,13 +154,6 @@ def _register_services(hass: HomeAssistant) -> None:
             c.stop_test_session()
         await _refresh()
 
-    hass.services.async_register(DOMAIN, SERVICE_LABEL_EVENT, label_event,
-        schema=vol.Schema({vol.Required(ATTR_EVENT_ID): cv.string,
-                           vol.Required(ATTR_LABEL): cv.string}))
-    hass.services.async_register(DOMAIN, SERVICE_CONFIRM_SUGGESTION, confirm_suggestion,
-        schema=vol.Schema({vol.Required(ATTR_EVENT_ID): cv.string}))
-    hass.services.async_register(DOMAIN, SERVICE_DISMISS_EVENT, dismiss_event,
-        schema=vol.Schema({vol.Required(ATTR_EVENT_ID): cv.string}))
     hass.services.async_register(DOMAIN, SERVICE_DELETE_SIGNATURE, delete_signature,
         schema=vol.Schema({vol.Required(ATTR_LABEL): cv.string}))
     hass.services.async_register(DOMAIN, SERVICE_RENAME_SIGNATURE, rename_signature,
